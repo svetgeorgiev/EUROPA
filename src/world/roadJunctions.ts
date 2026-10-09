@@ -63,7 +63,7 @@ export function mergeRoadSurface(
     .map(ring => [ring]);
   if (!polygons.length) return { positions, normals, indices, uvs };
 
-  let union = polygonClipping.union(...polygons);
+  let union = polygonClipping.union(polygons[0], ...polygons.slice(1));
   if (bounds) {
     if (!(bounds.maxX > bounds.minX && bounds.maxZ > bounds.minZ)) {
       throw new RangeError('Invalid streamed road tile bounds');

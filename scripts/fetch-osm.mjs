@@ -1,4 +1,5 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { generateChunkFiles } from './chunk-writer.mjs';
 import { resolve, dirname } from 'node:path';
 import { buildWorldMap } from '../src/world/osm.ts';
 import { worldToGeo } from '../src/geo/coordinates.ts';
@@ -45,4 +46,5 @@ await mkdir(dirname(output), { recursive: true });
 await writeFile(output, JSON.stringify(generated), 'utf8');
 console.log('Saved real OpenStreetMap data to', output);
 console.log('Source © OpenStreetMap contributors (ODbL 1.0): https://www.openstreetmap.org/copyright');
-console.log('Restart or refresh Vite to see the real-world road/building layout.');
+await generateChunkFiles();
+console.log('Restart or refresh Vite to stream the real-world Nova Zagora chunks.');

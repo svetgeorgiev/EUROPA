@@ -11,12 +11,14 @@
     "test:geo": "node --experimental-strip-types --test tests/coordinates.test.mjs",
     "map:fetch": "node --experimental-strip-types scripts/fetch-osm.mjs",
     "test:osm": "node --experimental-strip-types --test tests/osm.test.mjs",
-    "test": "node --experimental-strip-types --test tests/*.test.mjs"
+    "test": "node --experimental-strip-types --test tests/*.test.mjs",
+    "map:chunks": "node --experimental-strip-types scripts/generate-chunks.mjs"
   },
   "dependencies": {
     "@babylonjs/core": "^7.54.3",
     "vue": "^3.5.13",
-    "earcut": "^3.2.3"
+    "earcut": "^3.2.3",
+    "polygon-clipping": "^0.15.7"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.2.1",

@@ -1,135 +1,97 @@
+import { Scene, Mesh, MeshBuilder, StandardMaterial, VertexData } from '@babylonjs/core';
+import { buildBuildingGeometry } from './meshGeometry.ts';
+import { mergeRoadSurfaceSafely, type MapBounds } from './roadJunctions.ts';
 import {
-  Scene, Mesh, MeshBuilder, StandardMaterial, Color3, Vector3, VertexData
-} from '@babylonjs/core';
-import earcut from 'earcut';
-import type { BuildingFootprint, Point2, RoadSegment, WorldMap } from './osm';
+  createWorldMaterials, renderProceduralFacadeDetails, renderProceduralRoadDetails
+} from './worldAppearance.ts';
+import type { BuildingFootprint, Point2, RoadSegment, WorldMap } from './osm.ts';
 
 export interface RenderedWorld { solids: Mesh[]; spawn: Point2; }
 
-function makeMaterial(scene: Scene, name: string, hex: string): StandardMaterial {
-  const mat = new StandardMaterial(name, scene);
-  mat.diffuseColor = Color3.FromHexString(hex);
-  mat.specularColor = Color3.Black();
-  mat.backFaceCulling = false;
-  return mat;
-}
-
-function makeRoadSurface(scene: Scene, name: string, roads: RoadSegment[], mat: StandardMaterial): void {
-  const positions: number[] = [];
-  const indices: number[] = [];
-  for (const road of roads) {
-    const dx = road.b.x - road.a.x;
-    const dz = road.b.z - road.a.z;
-    const len = Math.hypot(dx, dz);
-    if (len < 0.2) continue;
-    const halfWidth = road.widthMeters / 2;
-    const nx = (-dz / len) * halfWidth;
-    const nz = (dx / len) * halfWidth;
-    const index = positions.length / 3;
-    positions.push(
-      road.a.x + nx, 0.035, road.a.z + nz,
-      road.a.x - nx, 0.035, road.a.z - nz,
-      road.b.x + nx, 0.035, road.b.z + nz,
-      road.b.x - nx, 0.035, road.b.z - nz
-    );
-    indices.push(index, index + 2, index + 1, index + 1, index + 2, index + 3);
-  }
-  if (!indices.length) return;
+/** A road's visible geometry; flat, non-collidable ground below handles physics. */
+export function makeRoadSurface(
+  scene: Scene, name: string, roads: RoadSegment[], mat: StandardMaterial,
+  tileBounds?: MapBounds
+): Mesh | null {
+  const data = mergeRoadSurfaceSafely(roads, tileBounds,
+    warning => console.warn('EUROPA ' + name + ': ' + warning));
+  if (!data.indices.length) return null;
   const mesh = new Mesh(name, scene);
   const vertices = new VertexData();
-  vertices.positions = positions;
-  vertices.indices = indices;
-  const normals: number[] = [];
-  VertexData.ComputeNormals(positions, indices, normals);
-  vertices.normals = normals;
+  vertices.positions = data.positions;
+  vertices.indices = data.indices;
+  vertices.normals = data.normals;
+  vertices.uvs = data.uvs;
   vertices.applyToMesh(mesh);
   mesh.material = mat;
   mesh.isPickable = false;
-}
-
-function makeBuilding(scene: Scene, building: BuildingFootprint, mat: StandardMaterial): Mesh | null {
-  const poly = building.outline;
-  if (poly.length < 3 || poly.length > 300) return null;
-  const coords = poly.flatMap(p => [p.x, p.z]);
-  const roofTriangles = earcut(coords);
-  if (!roofTriangles.length) return null;
-  const height = building.heightMeters;
-  const positions: number[] = [];
-  const indices: number[] = [];
-  // Two vertices per footprint corner: ground, roof.
-  for (const p of poly) positions.push(p.x, 0, p.z, p.x, height, p.z);
-  for (let i = 0; i < poly.length; i++) {
-    const next = (i + 1) % poly.length;
-    const a = i * 2, b = next * 2;
-    indices.push(a, a + 1, b, b, a + 1, b + 1);
-  }
-  // Winding must face +Y for upward roof normals in Babylon's X/Z plane.
-  for (let i = 0; i < roofTriangles.length; i += 3) {
-    const ia = roofTriangles[i], ib = roofTriangles[i + 1], ic = roofTriangles[i + 2];
-    const a = poly[ia], b = poly[ib], c = poly[ic];
-    const yNormal = (b.z - a.z) * (c.x - a.x) - (b.x - a.x) * (c.z - a.z);
-    if (yNormal >= 0) indices.push(ia * 2 + 1, ib * 2 + 1, ic * 2 + 1);
-    else indices.push(ia * 2 + 1, ic * 2 + 1, ib * 2 + 1);
-  }
-  const mesh = new Mesh('osm-building-' + building.id, scene);
-  const vertexData = new VertexData();
-  vertexData.positions = positions;
-  vertexData.indices = indices;
-  const normals: number[] = [];
-  VertexData.ComputeNormals(positions, indices, normals);
-  vertexData.normals = normals;
-  vertexData.applyToMesh(mesh);
-  mesh.material = mat;
-  mesh.checkCollisions = true;
+  mesh.checkCollisions = false;
   return mesh;
 }
 
+export function makeBuilding(
+  scene: Scene, building: BuildingFootprint, mat: StandardMaterial
+): Mesh | null {
+  const data = buildBuildingGeometry(building);
+  if (!data) return null;
+  const mesh = new Mesh('osm-building-' + building.id, scene);
+  const vertices = new VertexData();
+  vertices.positions = data.positions;
+  vertices.indices = data.indices;
+  vertices.normals = data.normals;
+  vertices.colors = data.colors;
+  vertices.applyToMesh(mesh);
+  mesh.useVertexColors = true;
+  mesh.material = mat;
+  // The sealed footprint collision system remains authoritative for buildings.
+  mesh.checkCollisions = false;
+  mesh.isPickable = false;
+  return mesh;
+}
+
+const PEDESTRIAN = new Set(['footway', 'path', 'pedestrian', 'cycleway', 'track']);
+
+/** Static 002B fallback also receives the same procedural appearance as 002C. */
 export function renderOSMWorld(scene: Scene, map: WorldMap): RenderedWorld {
+  const materials = createWorldMaterials(scene, 'osm', map.halfSizeMeters * 2 + 30);
   const solids: Mesh[] = [];
-  const grass = makeMaterial(scene, 'osm-grass', '#58735b');
-  const road = makeMaterial(scene, 'osm-roads', '#343a40');
-  const path = makeMaterial(scene, 'osm-paths', '#998f7b');
-  const walls = [
-    makeMaterial(scene, 'osm-walls-a', '#9a968a'),
-    makeMaterial(scene, 'osm-walls-b', '#c1a68e'),
-    makeMaterial(scene, 'osm-walls-c', '#93867b'),
-    makeMaterial(scene, 'osm-walls-d', '#b1ada4')
-  ];
   const ground = MeshBuilder.CreateGround('osm-flat-ground', {
     width: map.halfSizeMeters * 2 + 30,
     height: map.halfSizeMeters * 2 + 30
   }, scene);
-  ground.material = grass;
+  ground.material = materials.ground;
   ground.checkCollisions = true;
   solids.push(ground);
 
-  const pedestrian = new Set(['footway', 'path', 'pedestrian', 'cycleway', 'track']);
-  makeRoadSurface(scene, 'osm-roads', map.roads.filter(x => !pedestrian.has(x.highway)), road);
-  makeRoadSurface(scene, 'osm-footpaths', map.roads.filter(x => pedestrian.has(x.highway)), path);
+  makeRoadSurface(scene, 'osm-roads',
+    map.roads.filter(road => !PEDESTRIAN.has(road.highway)), materials.road);
+  makeRoadSurface(scene, 'osm-footpaths',
+    map.roads.filter(road => PEDESTRIAN.has(road.highway)), materials.path);
+  renderProceduralRoadDetails(scene, 'osm', map.roads, materials);
 
   for (const footprint of map.buildings) {
-    const mesh = makeBuilding(scene, footprint, walls[Math.abs(footprint.id) % walls.length]);
+    const mesh = makeBuilding(scene, footprint,
+      materials.walls[Math.abs(footprint.id) % materials.walls.length]);
     if (mesh) solids.push(mesh);
   }
+  renderProceduralFacadeDetails(scene, 'osm', map.buildings, materials);
 
-  // Pick a road near the geographic anchor rather than guessing an OSM spawn position.
+  // Select a road midpoint nearest the anchor, with collision-safe final spawn
+  // checked later by EuropaGame's BuildingCollisionField.
   let best = map.roads[0];
   let nearest = Number.POSITIVE_INFINITY;
   for (const segment of map.roads) {
-    if (pedestrian.has(segment.highway)) continue;
-    const midX = (segment.a.x + segment.b.x) / 2;
-    const midZ = (segment.a.z + segment.b.z) / 2;
-    const distance = midX * midX + midZ * midZ;
-    if (distance < nearest) {
-      nearest = distance;
+    if (PEDESTRIAN.has(segment.highway)) continue;
+    const x = (segment.a.x + segment.b.x) / 2;
+    const z = (segment.a.z + segment.b.z) / 2;
+    const dist = x * x + z * z;
+    if (dist < nearest) {
+      nearest = dist;
       best = segment;
     }
   }
   return {
     solids,
-    spawn: {
-      x: (best.a.x + best.b.x) / 2,
-      z: (best.a.z + best.b.z) / 2,
-    }
+    spawn: { x: (best.a.x + best.b.x) / 2, z: (best.a.z + best.b.z) / 2 }
   };
 }

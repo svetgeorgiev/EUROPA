@@ -4,3 +4,5 @@ dist/
 *.log
 .env
 .env.local
+# Generated ODbL-licensed map database (fetch locally; do not confuse with GPL game code)
+public/worlds/*/map.json

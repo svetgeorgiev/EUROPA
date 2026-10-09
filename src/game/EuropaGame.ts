@@ -1,3 +1,5 @@
+import { renderOSMWorld } from '../world/renderOSM';
+import { isWorldMap } from '../world/osm';
 import {
   Engine, Scene, FreeCamera, Vector3, HemisphericLight, DirectionalLight,
   MeshBuilder, StandardMaterial, Color3, Color4, Mesh, Scalar, Ray
@@ -8,6 +10,7 @@ export interface GameCallbacks {
   onStats: (stats: GameStats) => void;
   onLockChange: (locked: boolean) => void;
   onError: (message: string) => void;
+  onWorldChange: (mode: 'test' | 'osm') => void;
 }
 
 const WALK_SPEED = 4.5;
@@ -58,6 +61,8 @@ export class EuropaGame {
     this.playerCollider.ellipsoidOffset = Vector3.Zero();
     this.playerCollider.position.set(0, PLAYER_HEIGHT / 2 + 0.03, -7);
     this.makeTestWorld();
+    this.callbacks.onWorldChange('test');
+    void this.tryLoadOSMWorld();
     window.addEventListener('keydown', this.onKeyDown);
     window.addEventListener('keyup', this.onKeyUp);
     window.addEventListener('blur', this.onBlur);
@@ -137,6 +142,43 @@ export class EuropaGame {
     hemi.intensity = 0.8;
     const sun = new DirectionalLight('sun', new Vector3(-0.6, -1, 0.4), this.scene);
     sun.intensity = 0.65;
+  }
+
+
+  /**
+   * Optional 002B map. Missing data leaves the proven synthetic 001 scene intact.
+   * Generated map is supplied by pnpm map:fetch and served from Vite's public dir.
+   */
+  private async tryLoadOSMWorld(): Promise<void> {
+    try {
+      const response = await fetch('/worlds/nova-zagora/map.json', { cache: 'no-store' });
+      if (!response.ok) {
+        console.info('EUROPA: no imported OSM map yet; run pnpm map:fetch. Using test environment.');
+        return;
+      }
+      const map: unknown = await response.json();
+      if (!isWorldMap(map) || map.buildings.length < 1) {
+        console.warn('EUROPA: OSM map is empty or invalid. Keeping test environment.');
+        return;
+      }
+      if (this.disposed) return;
+      // Preserve the player collider, camera and lights; replace only scene geometry.
+      const meshes = this.scene.meshes.filter(mesh => mesh !== this.playerCollider);
+      meshes.forEach(mesh => mesh.dispose());
+      this.solids.length = 0;
+      const world = renderOSMWorld(this.scene, map);
+      this.solids.push(...world.solids);
+      this.playerCollider.position.set(world.spawn.x, PLAYER_HEIGHT / 2 + 0.03, world.spawn.z);
+      this.camera.position.copyFrom(this.playerCollider.position);
+      this.camera.position.y += EYE_HEIGHT - PLAYER_HEIGHT / 2;
+      this.verticalVelocity = 0;
+      this.grounded = false;
+      this.callbacks.onWorldChange('osm');
+      this.publishStats();
+      console.info('EUROPA: loaded OpenStreetMap world:', map.roads.length, 'road segments,', map.buildings.length, 'buildings');
+    } catch (error) {
+      console.warn('EUROPA: could not load optional OSM world; using test environment.', error);
+    }
   }
 
   private onKeyDown = (event: KeyboardEvent): void => {

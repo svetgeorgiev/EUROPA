@@ -51,7 +51,9 @@ test('stale responses never activate an unloaded tile after player moves', async
   });
   const old = streamer.moveTo(point(0, 0));
   const next = streamer.moveTo(point(3, 3));
-  // All requests are started immediately; resolve stale and current tiles.
+  // Requests are deliberately scheduled to a microtask so pending bookkeeping
+  // is set before any synchronous rejection. Let those promises start first.
+  await Promise.resolve();
   for (const [id, resolve] of waiting) resolve(data.get(id));
   await Promise.all([old, next]);
   assert.deepEqual(active, new Set(['2_2', '2_3', '3_2', '3_3']));
@@ -88,18 +90,18 @@ test('invalid tile is not retried every frame; leaving and returning permits ret
 });
 
 test('disposal ignores late network responses and clears all previously loaded tiles', async () => {
-  let resolvePending;
+  const waiting = new Map();
   const activated = [];
   const streamer = new ChunkStreamer(manifest, {
-    loadChunk: () => new Promise(resolve => { resolvePending = resolve; }),
+    loadChunk: id => new Promise(resolve => waiting.set(id, resolve)),
     onLoad: chunk => activated.push(chunk.id),
     onUnload: () => {},
     onStatus: () => {}
   });
   const operation = streamer.moveTo(point(0, 0));
+  await Promise.resolve();
   streamer.dispose();
-  resolvePending(data.get('1_1'));
-  // Other promises may be unresolved: this specific test resolves via microtasks only.
+  for (const [id, resolve] of waiting) resolve(data.get(id));
+  await operation;
   assert.equal(activated.length, 0);
-  void operation;
 });

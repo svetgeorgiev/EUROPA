@@ -34,6 +34,10 @@ pnpm build
 
 The 001 scene is **synthetic**, not a replica of Nova Zagora. Its movement controller uses a mesh collider (not `camera.moveWithCollisions()`).
 
+## Geographic preview (002A branch)
+
+A WGS84 local-tangent projection and a **simulated** lat/lon HUD are available in `feat/europa-002a-geographic-coordinates`. No OSM scene data has been imported. See [docs/GEO-002A.md](docs/GEO-002A.md). Run `pnpm test:geo` for geographic unit tests.
+
 ## Roadmap
 
 - **001**: browser engine and movement (playtested)

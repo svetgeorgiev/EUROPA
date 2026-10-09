@@ -1,10 +1,14 @@
 <script setup lang="ts">
 import { onMounted, onBeforeUnmount, ref } from 'vue';
 import { EuropaGame, type GameStats } from './game/EuropaGame';
+import { computed } from 'vue';
+import { worldToGeo } from './geo/coordinates';
+import { NOVA_ZAGORA_ANCHOR } from './geo/worldConfig';
 const canvas = ref<HTMLCanvasElement | null>(null);
 const locked = ref(false);
 const error = ref('');
 const stats = ref<GameStats>({ fps: 0, x: 0, y: 0, z: 0, grounded: false });
+const previewGeo = computed(() => worldToGeo({ x: stats.value.x, y: 0, z: stats.value.z }, NOVA_ZAGORA_ANCHOR));
 let game: EuropaGame | null = null;
 onMounted(() => {
   if (!canvas.value) return;
@@ -22,6 +26,7 @@ function start(): void { game?.requestPointerLock(); }
     <canvas ref="canvas" class="game-canvas" @click="start" aria-label="EUROPA 3D game viewport" />
     <header class="hud-top"><div class="brand">EUROPA <span>001</span></div><div class="sub">ENGINE FOUNDATION · TEST ENVIRONMENT</div></header>
     <div class="stats" aria-live="off"><strong>{{ stats.fps }}</strong> FPS <span class="separator">·</span> X {{ stats.x.toFixed(1) }} · Y {{ stats.y.toFixed(1) }} · Z {{ stats.z.toFixed(1) }} <span class="separator">·</span> {{ stats.grounded ? 'GROUNDED' : 'AIRBORNE' }}</div>
+    <div class="geo-preview" title="Simulated projection only — no real map or elevation imported">GEO PREVIEW (SIMULATED) · {{ previewGeo.latitude.toFixed(6) }}° N · {{ previewGeo.longitude.toFixed(6) }}° E</div>
     <div v-if="error" style="position:absolute;top:90px;left:24px;right:24px;padding:16px;background:#5b1414;color:white;z-index:30;overflow-wrap:anywhere">Game engine error: {{ error }} — press F12 for details.</div>
     <div v-if="locked" class="crosshair" aria-hidden="true">+</div>
     <section v-if="!locked" class="start-overlay" @click="start">
@@ -33,6 +38,6 @@ function start(): void { game?.requestPointerLock(); }
         <div class="controls">WASD — Move <span>·</span> Mouse — Look <span>·</span> Shift — Sprint <span>·</span> Space — Jump <span>·</span> Esc — Pause</div>
       </div>
     </section>
-    <footer class="footer">NOVA ZAGORA · GEOGRAPHIC IMPORT NOT YET ENABLED</footer>
+    <footer class="footer">NOVA ZAGORA · COORDINATES PREVIEW ONLY · NO REAL MAP DATA</footer>
   </main>
 </template>

@@ -28,7 +28,7 @@ pnpm map:fetch
 pnpm dev
 \`\`\`
 
-The downloader needs internet. If the first Overpass endpoint is unavailable, it tries a second one. Public Overpass instances rate-limit requests; do not run it repeatedly or use it as a live game server. The script refuses to overwrite a previously good map if the response contains insufficient data.
+The downloader needs internet. If both Overpass servers return errors, run `pnpm map:fetch --osm-api` **once** for the small dev region; this opt-in option uses the OSM main API, which must not be used for bulk downloads. See [small-area fallback](GEO-002B-API-FALLBACK.md). If the first Overpass endpoint is unavailable, it tries a second one. Public Overpass instances rate-limit requests; do not run it repeatedly or use it as a live game server. The script refuses to overwrite a previously good map if the response contains insufficient data.
 
 **Important:** Vite reads the generated file from \`public/worlds/nova-zagora/map.json\`. Refresh the browser after the download. If the file doesn't exist or can't be parsed, the original synthetic map still appears, and the UI clearly says \`TEST ENVIRONMENT · IMPORT PENDING\`.
 

@@ -4,12 +4,15 @@ import { buildWorldMap } from '../src/world/osm.ts';
 import { worldToGeo } from '../src/geo/coordinates.ts';
 import { NOVA_ZAGORA_ANCHOR } from '../src/geo/worldConfig.ts';
 import { listOverpassEndpoints, requestOverpass } from './overpass-client.mjs';
+import { normalizeCoreMapJSON, requestCoreMap } from './osm-core-api.mjs';
 
 const output = resolve('public/worlds/nova-zagora/map.json');
 const argv = process.argv.slice(2);
+const useCoreApi = argv.includes('--osm-api');
 const inputAt = argv.indexOf('--input');
 const inputFile = inputAt >= 0 ? argv[inputAt + 1] : null;
 if (inputAt >= 0 && !inputFile) throw new Error('--input requires a JSON filepath');
+if (useCoreApi && inputAt >= 0) throw new Error('Choose either --osm-api or --input, not both');
 
 const min = worldToGeo({ x: -500, y: 0, z: -500 }, NOVA_ZAGORA_ANCHOR);
 const max = worldToGeo({ x: 500, y: 0, z: 500 }, NOVA_ZAGORA_ANCHOR);
@@ -18,9 +21,13 @@ const query = '[out:json][timeout:60];(way["highway"](' + bbox + ');way["buildin
 
 async function obtainData() {
   if (inputFile) {
-    console.log('Using existing OSM Overpass JSON:', inputFile);
-    return JSON.parse(await readFile(resolve(inputFile), 'utf8'));
+    console.log('Using existing OpenStreetMap JSON:', inputFile);
+    const data = JSON.parse(await readFile(resolve(inputFile), 'utf8'));
+    // Accept both Overpass out geom JSON and OSM core /map.json exports.
+    return data.elements?.some(element => element.type === 'way' && Array.isArray(element.nodes))
+      ? normalizeCoreMapJSON(data) : data;
   }
+  if (useCoreApi) return requestCoreMap(NOVA_ZAGORA_ANCHOR);
   return requestOverpass(query, { endpoints: listOverpassEndpoints(process.env.EUROPA_OVERPASS_URL) });
 }
 

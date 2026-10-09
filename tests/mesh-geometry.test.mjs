@@ -70,10 +70,9 @@ test('buildings have separate flat wall and roof geometry in either winding', ()
       assert.equal(mesh.colors[i * 4], 0.48, 'roof has muted distinct tint');
       assert.ok(mesh.positions[i * 3 + 1] > 6);
     }
-    for (let i = n * 2; i < mesh.indices.length; i += 3) {
-      // Four wall faces each use six indices = 24 indices, not 8.
-      if (i < n * 6) continue;
-      assert.ok(crossY(mesh.positions, ...mesh.indices.slice(i, i+3)) > 0);
+    // Four walls, six indices each. Roof triangles begin at index 24.
+    for (let i = n * 6; i < mesh.indices.length; i += 3) {
+      assert.ok(crossY(mesh.positions, ...mesh.indices.slice(i, i + 3)) > 0);
     }
   }
 });

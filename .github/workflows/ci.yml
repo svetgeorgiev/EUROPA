@@ -1,7 +1,7 @@
 name: Validate EUROPA
 on:
   push:
-    branches: [main, 'feat/europa-002c-world-streaming']
+    branches: [main, 'feat/europa-002d-recognisable-nova-zagora']
   pull_request:
 jobs:
   validate:

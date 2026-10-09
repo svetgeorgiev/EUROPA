@@ -12,7 +12,8 @@
     "map:fetch": "node --experimental-strip-types scripts/fetch-osm.mjs",
     "test:osm": "node --experimental-strip-types --test tests/osm.test.mjs",
     "test": "node --experimental-strip-types --test tests/*.test.mjs",
-    "map:chunks": "node --experimental-strip-types scripts/generate-chunks.mjs"
+    "map:chunks": "node --experimental-strip-types scripts/generate-chunks.mjs",
+    "map:nav": "node --experimental-strip-types scripts/import-navigation.mjs"
   },
   "dependencies": {
     "@babylonjs/core": "^7.54.3",

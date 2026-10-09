@@ -8,3 +8,5 @@ dist/
 public/worlds/*/map.json
 # 002C derived geographic tiles (ODbL; generated locally)
 public/worlds/*/chunks/
+# 002D.1 independent ODbL landmark / street label database
+public/worlds/*/navigation.json

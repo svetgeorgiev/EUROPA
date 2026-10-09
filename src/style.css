@@ -3,3 +3,5 @@
 .geo-preview{position:absolute;top:68px;right:25px;padding:7px 11px;border-radius:6px;background:#081216b8;border:1px solid #ffffff33;color:#cde0da;font-size:11px;letter-spacing:.035em;font-variant-numeric:tabular-nums;pointer-events:none}@media(max-width:650px){.geo-preview{top:125px;left:28px;right:auto}}
 
 .footer a{color:#f4d6a0;text-decoration:underline;text-underline-offset:2px;pointer-events:auto}
+
+.stream-debug{position:absolute;top:104px;right:25px;padding:7px 11px;border-radius:6px;background:#081216b8;border:1px solid #ffffff33;color:#e9b55e;font-size:11px;letter-spacing:.04em;font-variant-numeric:tabular-nums;pointer-events:none}@media(max-width:650px){.stream-debug{top:162px;left:28px;right:auto}}

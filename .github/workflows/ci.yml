@@ -1,9 +1,8 @@
 name: Validate EUROPA
 on:
   push:
-    branches: [main]
+    branches: [main, 'feat/europa-002c-world-streaming']
   pull_request:
-    branches: [main]
 jobs:
   validate:
     runs-on: ubuntu-latest

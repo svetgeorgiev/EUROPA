@@ -6,3 +6,5 @@ dist/
 .env.local
 # Generated ODbL-licensed map database (fetch locally; do not confuse with GPL game code)
 public/worlds/*/map.json
+# 002C derived geographic tiles (ODbL; generated locally)
+public/worlds/*/chunks/

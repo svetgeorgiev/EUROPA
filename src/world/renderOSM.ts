@@ -6,7 +6,7 @@ import type { BuildingFootprint, Point2, RoadSegment, WorldMap } from './osm';
 
 export interface RenderedWorld { solids: Mesh[]; spawn: Point2; }
 
-function makeMaterial(scene: Scene, name: string, hex: string): StandardMaterial {
+export function makeMaterial(scene: Scene, name: string, hex: string): StandardMaterial {
   const mat = new StandardMaterial(name, scene);
   mat.diffuseColor = Color3.FromHexString(hex);
   mat.specularColor = Color3.Black();
@@ -14,7 +14,7 @@ function makeMaterial(scene: Scene, name: string, hex: string): StandardMaterial
   return mat;
 }
 
-function makeRoadSurface(scene: Scene, name: string, roads: RoadSegment[], mat: StandardMaterial): void {
+export function makeRoadSurface(scene: Scene, name: string, roads: RoadSegment[], mat: StandardMaterial): Mesh | null {
   const positions: number[] = [];
   const indices: number[] = [];
   for (const road of roads) {
@@ -34,7 +34,7 @@ function makeRoadSurface(scene: Scene, name: string, roads: RoadSegment[], mat: 
     );
     indices.push(index, index + 2, index + 1, index + 1, index + 2, index + 3);
   }
-  if (!indices.length) return;
+  if (!indices.length) return null;
   const mesh = new Mesh(name, scene);
   const vertices = new VertexData();
   vertices.positions = positions;
@@ -45,9 +45,10 @@ function makeRoadSurface(scene: Scene, name: string, roads: RoadSegment[], mat: 
   vertices.applyToMesh(mesh);
   mesh.material = mat;
   mesh.isPickable = false;
+  return mesh;
 }
 
-function makeBuilding(scene: Scene, building: BuildingFootprint, mat: StandardMaterial): Mesh | null {
+export function makeBuilding(scene: Scene, building: BuildingFootprint, mat: StandardMaterial): Mesh | null {
   const poly = building.outline;
   if (poly.length < 3 || poly.length > 300) return null;
   const coords = poly.flatMap(p => [p.x, p.z]);

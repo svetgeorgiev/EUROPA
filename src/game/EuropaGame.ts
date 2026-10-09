@@ -1,4 +1,7 @@
 import { renderOSMWorld } from '../world/renderOSM';
+import { ChunkRenderer, type ChunkGeometry } from '../world/ChunkRenderer';
+import { ChunkStreamer, type ChunkStreamStats } from '../world/ChunkStreamer';
+import { chunkAt, chunkId, isChunkManifest, type ChunkManifest, type ChunkFile } from '../world/chunkGrid';
 import { isWorldMap } from '../world/osm';
 import {
   Engine, Scene, FreeCamera, Vector3, HemisphericLight, DirectionalLight,
@@ -10,7 +13,8 @@ export interface GameCallbacks {
   onStats: (stats: GameStats) => void;
   onLockChange: (locked: boolean) => void;
   onError: (message: string) => void;
-  onWorldChange: (mode: 'test' | 'osm') => void;
+  onWorldChange: (mode: 'test' | 'osm' | 'stream') => void;
+  onStreamStats: (stats: ChunkStreamStats) => void;
 }
 
 const WALK_SPEED = 4.5;
@@ -35,6 +39,14 @@ export class EuropaGame {
   private yaw = 0;
   private statsElapsed = 0;
   private disposed = false;
+  private readonly streamAbort = new AbortController();
+  private chunkManifest: ChunkManifest | null = null;
+  private chunkRenderer: ChunkRenderer | null = null;
+  private streamer: ChunkStreamer | null = null;
+  private streamActive = false;
+  private lastStreamTile = '';
+  private readonly streamedGeometry = new Map<string, ChunkGeometry>();
+  private boundaryMeshes: Mesh[] = [];
 
   constructor(private readonly canvas: HTMLCanvasElement, callbacks: GameCallbacks) {
     this.callbacks = callbacks;
@@ -62,7 +74,7 @@ export class EuropaGame {
     this.playerCollider.position.set(0, PLAYER_HEIGHT / 2 + 0.03, -7);
     this.makeTestWorld();
     this.callbacks.onWorldChange('test');
-    void this.tryLoadOSMWorld();
+    void this.tryLoadWorld();
     window.addEventListener('keydown', this.onKeyDown);
     window.addEventListener('keyup', this.onKeyUp);
     window.addEventListener('blur', this.onBlur);
@@ -145,6 +157,118 @@ export class EuropaGame {
   }
 
 
+
+  /**
+   * 002C: try a versioned, generated chunk manifest first. If it is missing
+   * (or the spawn tile could not be loaded), retain the 002B whole-map path.
+   */
+  private async tryLoadWorld(): Promise<void> {
+    try {
+      const response = await fetch('/worlds/nova-zagora/chunks/manifest.json', {
+        cache: 'no-store', signal: this.streamAbort.signal
+      });
+      if (!response.ok) {
+        await this.tryLoadOSMWorld();
+        return;
+      }
+      const manifestData: unknown = await response.json();
+      if (!isChunkManifest(manifestData)) {
+        console.warn('EUROPA: invalid chunk manifest. Falling back to 002B map.json.');
+        await this.tryLoadOSMWorld();
+        return;
+      }
+      if (this.disposed) return;
+      const manifest = manifestData;
+      this.chunkManifest = manifest;
+      this.chunkRenderer = new ChunkRenderer(this.scene, manifest);
+      // Remember the existing test scene until a valid spawn tile has loaded.
+      const oldMeshes = this.scene.meshes.filter(mesh => mesh !== this.playerCollider);
+      const streamer = new ChunkStreamer(manifest, {
+        loadChunk: async id => {
+          const path = '/worlds/nova-zagora/chunks/' + id + '.json';
+          const reply = await fetch(path, { cache: 'no-store', signal: this.streamAbort.signal });
+          if (!reply.ok) throw new Error('HTTP ' + reply.status + ' at ' + path);
+          return await reply.json() as ChunkFile;
+        },
+        onLoad: chunk => {
+          if (this.disposed || !this.chunkRenderer) return;
+          const geometry = this.chunkRenderer.render(chunk);
+          this.streamedGeometry.set(chunk.id, geometry);
+          if (this.streamActive) this.syncStreamSolids();
+        },
+        onUnload: id => {
+          const geometry = this.streamedGeometry.get(id);
+          if (!geometry) return;
+          for (const mesh of geometry.meshes) mesh.dispose();
+          this.streamedGeometry.delete(id);
+          if (this.streamActive) this.syncStreamSolids();
+        },
+        onStatus: status => { this.callbacks.onStreamStats(status); },
+        onWarning: warning => { console.warn('EUROPA:', warning); }
+      });
+      this.streamer = streamer;
+      await streamer.moveTo(manifest.spawn);
+      if (this.disposed) return;
+      const center = chunkAt(manifest.spawn, manifest);
+      const id = center ? chunkId(center.col, center.row) : '';
+      if (!id || !streamer.hasLoaded(id)) {
+        console.warn('EUROPA: spawn chunk failed; reverting to complete 002B map.');
+        streamer.dispose();
+        this.streamer = null;
+        this.chunkRenderer.dispose();
+        this.chunkRenderer = null;
+        this.chunkManifest = null;
+        await this.tryLoadOSMWorld();
+        return;
+      }
+
+      // The OSM world is ready: remove only the pre-existing test scene.
+      oldMeshes.forEach(mesh => mesh.dispose());
+      this.boundaryMeshes = this.chunkRenderer.createWorldBoundary();
+      this.streamActive = true;
+      this.syncStreamSolids();
+      this.playerCollider.position.set(
+        manifest.spawn.x, PLAYER_HEIGHT / 2 + 0.03, manifest.spawn.z
+      );
+      this.camera.position.copyFrom(this.playerCollider.position);
+      this.camera.position.y += EYE_HEIGHT - PLAYER_HEIGHT / 2;
+      this.verticalVelocity = 0;
+      this.grounded = false;
+      this.lastStreamTile = id;
+      this.callbacks.onWorldChange('stream');
+      this.callbacks.onStreamStats(streamer.stats);
+      this.publishStats();
+      console.info('EUROPA: 002C streaming enabled; active tiles:', streamer.stats.loaded);
+    } catch (error) {
+      if (this.disposed || this.streamAbort.signal.aborted) return;
+      console.warn('EUROPA: chunk streaming could not start; loading 002B world.', error);
+      this.streamer?.dispose();
+      this.streamer = null;
+      this.chunkRenderer?.dispose();
+      this.chunkRenderer = null;
+      this.chunkManifest = null;
+      await this.tryLoadOSMWorld();
+    }
+  }
+
+  private syncStreamSolids(): void {
+    if (!this.streamActive) return;
+    this.solids.length = 0;
+    this.solids.push(...this.boundaryMeshes);
+    for (const geometry of this.streamedGeometry.values()) {
+      this.solids.push(...geometry.solids);
+    }
+  }
+
+  private updateChunkStreaming(): void {
+    if (!this.streamActive || !this.streamer || !this.chunkManifest) return;
+    const tile = chunkAt({ x: this.camera.position.x, z: this.camera.position.z }, this.chunkManifest);
+    const id = tile ? chunkId(tile.col, tile.row) : '';
+    if (!id || id === this.lastStreamTile) return;
+    this.lastStreamTile = id;
+    void this.streamer.moveTo({ x: this.camera.position.x, z: this.camera.position.z });
+  }
+
   /**
    * Optional 002B map. Missing data leaves the proven synthetic 001 scene intact.
    * Generated map is supplied by pnpm map:fetch and served from Vite's public dir.
@@ -212,6 +336,7 @@ export class EuropaGame {
       const dt = Math.min(this.engine.getDeltaTime() / 1000, 0.05);
       const playing = document.pointerLockElement === this.canvas;
       if (playing) this.updateMovement(dt);
+      this.updateChunkStreaming();
       this.scene.render();
       this.statsElapsed += dt;
       if (this.statsElapsed >= 0.15) {
@@ -268,6 +393,13 @@ export class EuropaGame {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.streamAbort.abort();
+    this.streamer?.dispose();
+    this.streamer = null;
+    this.chunkRenderer?.dispose();
+    this.chunkRenderer = null;
+    for (const mesh of this.boundaryMeshes) mesh.dispose();
+    this.boundaryMeshes = [];
     if (document.pointerLockElement === this.canvas) document.exitPointerLock();
     window.removeEventListener('keydown', this.onKeyDown);
     window.removeEventListener('keyup', this.onKeyUp);

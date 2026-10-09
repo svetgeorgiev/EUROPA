@@ -1,61 +1,68 @@
-import { Mesh, MeshBuilder, Scene, StandardMaterial } from '@babylonjs/core';
-import { makeBuilding, makeMaterial, makeRoadSurface, WORLD_COLORS } from './renderOSM';
+import { Mesh, MeshBuilder, Scene } from '@babylonjs/core';
+import { makeBuilding, makeRoadSurface } from './renderOSM';
+import {
+  createWorldMaterials, renderProceduralFacadeDetails,
+  renderProceduralRoadDetails, type WorldMaterials
+} from './worldAppearance.ts';
 import type { ChunkFile, ChunkManifest } from './chunkGrid';
 
 export interface ChunkGeometry { meshes: Mesh[]; solids: Mesh[]; }
 const PEDESTRIAN = new Set(['footway', 'path', 'pedestrian', 'cycleway', 'track']);
 
 /**
- * Render one spatial tile. Meshes own their geometry; materials are shared
- * across all tiles and released only when the entire renderer is disposed.
+ * Shared procedural materials and textures for all active tiles. Tile meshes
+ * are disposed during unload; textures/materials are released with the renderer.
  */
 export class ChunkRenderer {
   private readonly scene: Scene;
   private readonly manifest: ChunkManifest;
-  private readonly groundMat: StandardMaterial;
-  private readonly roadMat: StandardMaterial;
-  private readonly pathMat: StandardMaterial;
-  private readonly wallMats: StandardMaterial[];
-  private readonly materials: StandardMaterial[];
+  private readonly materials: WorldMaterials;
 
   constructor(scene: Scene, manifest: ChunkManifest) {
     this.scene = scene;
     this.manifest = manifest;
-    this.groundMat = makeMaterial(scene, 'tile-grass', WORLD_COLORS.grass, 0.12);
-    this.roadMat = makeMaterial(scene, 'tile-roads', WORLD_COLORS.roads, 0.35);
-    this.pathMat = makeMaterial(scene, 'tile-paths', WORLD_COLORS.paths, 0.24);
-    this.wallMats = WORLD_COLORS.walls.map(
-      (color, i) => makeMaterial(scene, 'tile-wall-' + i, color, 0.22)
-    );
-    this.materials = [this.groundMat, this.roadMat, this.pathMat, ...this.wallMats];
+    this.materials = createWorldMaterials(scene, 'tile', manifest.tileSizeMeters);
   }
 
   render(chunk: ChunkFile): ChunkGeometry {
     const { tileSizeMeters: size, origin } = this.manifest;
-    const ground = MeshBuilder.CreateGround('chunk-ground-' + chunk.id, { width: size, height: size }, this.scene);
+    const ground = MeshBuilder.CreateGround(
+      'chunk-ground-' + chunk.id, { width: size, height: size }, this.scene
+    );
     ground.position.x = origin.x + (chunk.col + 0.5) * size;
     ground.position.z = origin.z + (chunk.row + 0.5) * size;
-    ground.material = this.groundMat;
+    ground.material = this.materials.ground;
     ground.checkCollisions = true;
     const meshes: Mesh[] = [ground];
     const solids: Mesh[] = [ground];
+
     const roads = makeRoadSurface(this.scene, 'chunk-roads-' + chunk.id,
-      chunk.roads.filter(road => !PEDESTRIAN.has(road.highway)), this.roadMat);
+      chunk.roads.filter(road => !PEDESTRIAN.has(road.highway)), this.materials.road);
     const paths = makeRoadSurface(this.scene, 'chunk-paths-' + chunk.id,
-      chunk.roads.filter(road => PEDESTRIAN.has(road.highway)), this.pathMat);
+      chunk.roads.filter(road => PEDESTRIAN.has(road.highway)), this.materials.path);
     if (roads) meshes.push(roads);
     if (paths) meshes.push(paths);
+
+    meshes.push(...renderProceduralRoadDetails(
+      this.scene, 'chunk-' + chunk.id, chunk.roads, this.materials
+    ));
+
     for (const footprint of chunk.buildings) {
       const building = makeBuilding(this.scene, footprint,
-        this.wallMats[Math.abs(footprint.id) % this.wallMats.length]);
+        this.materials.walls[Math.abs(footprint.id) % this.materials.walls.length]);
       if (!building) continue;
       meshes.push(building);
       solids.push(building);
     }
+
+    const facades = renderProceduralFacadeDetails(
+      this.scene, 'chunk-' + chunk.id, chunk.buildings, this.materials
+    );
+    if (facades) meshes.push(facades);
     return { meshes, solids };
   }
 
-  /** Static invisible walls prevent walking off the finite 1km prototype. */
+  /** Invisible collision walls mark the edge of this finite 1 km prototype. */
   createWorldBoundary(): Mesh[] {
     const half = this.manifest.halfSizeMeters;
     const wallLength = half * 2 + 2;
@@ -78,6 +85,6 @@ export class ChunkRenderer {
   }
 
   dispose(): void {
-    for (const material of this.materials) material.dispose();
+    this.materials.dispose();
   }
 }

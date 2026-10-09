@@ -13,12 +13,13 @@ export interface ColoredGeometry {
   colors: number[];
 }
 
-export type RoadGeometry = Omit<ColoredGeometry, 'colors'>;
+export type RoadGeometry = Omit<ColoredGeometry, 'colors'> & { uvs: number[] };
 
 export function buildRoadGeometry(roads: readonly RoadSegment[], y = 0.045): RoadGeometry {
   const positions: number[] = [];
   const indices: number[] = [];
   const normals: number[] = [];
+  const uvs: number[] = [];
   for (const road of roads) {
     const dx = road.b.x - road.a.x;
     const dz = road.b.z - road.a.z;
@@ -40,10 +41,12 @@ export function buildRoadGeometry(roads: readonly RoadSegment[], y = 0.045): Roa
     // Unconditionally upward normals, independent of road direction.
     // The underlying flat ground supplies collisions; roads are visual-only.
     normals.push(0, 1, 0, 0, 1, 0, 0, 1, 0, 0, 1, 0);
+    // Repeat small asphalt grain consistently along each OSM road segment.
+    uvs.push(0, 0, 1, 0, 0, length / 8, 1, length / 8);
     indices.push(offset, offset + 2, offset + 1,
       offset + 1, offset + 2, offset + 3);
   }
-  return { positions, indices, normals };
+  return { positions, indices, normals, uvs };
 }
 
 function signedArea(points: readonly Point2[]): number {

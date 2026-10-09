@@ -81,7 +81,10 @@ export function makeBuilding(scene: Scene, building: BuildingFootprint, mat: Sta
   vertexData.normals = normals;
   vertexData.applyToMesh(mesh);
   mesh.material = mat;
-  mesh.checkCollisions = true;
+  // The visual outline is an infinitely thin, potentially single-sided mesh.
+  // Physics is enforced by BuildingCollisionField using the actual polygon.
+  mesh.checkCollisions = false;
+  mesh.isPickable = false;
   return mesh;
 }
 

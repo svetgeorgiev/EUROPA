@@ -43,7 +43,7 @@ function start(): void { game?.requestPointerLock(); }
         <h1>THE WORLD<br />AFTER THE FALL.</h1>
         <p>{{ worldMode === 'stream' ? 'Explore OSM Nova Zagora. World tiles load and unload as you move. Elevation and building interiors are not implemented.' : worldMode === 'osm' ? 'Explore the static OSM prototype. Run pnpm map:chunks to enable streaming.' : 'This is the synthetic environment. Run pnpm map:fetch --osm-api to import real Nova Zagora streets.' }}</p>
         <button type="button" @click.stop="start">CLICK TO ENTER <span>→</span></button>
-        <div class="controls">WASD — Move <span>·</span> Mouse — Look <span>·</span> Shift — Sprint <span>·</span> Space — Jump <span>·</span> Esc — Pause</div>
+        <div class="controls">WASD — Move <span>·</span> Mouse — Look <span>·</span> Shift — Sprint <span>·</span> Space — Jump <span>·</span> R — Unstick <span>·</span> Esc — Pause</div>
       </div>
     </section>
     <footer class="footer"><template v-if="worldMode !== 'test'">NOVA ZAGORA · MAP DATA <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">© OpenStreetMap contributors · ODbL 1.0</a></template><template v-else>NOVA ZAGORA · TEST WORLD · RUN pnpm map:fetch</template></footer>

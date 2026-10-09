@@ -2,7 +2,8 @@ import { renderOSMWorld } from '../world/renderOSM';
 import { ChunkRenderer, type ChunkGeometry } from '../world/ChunkRenderer';
 import { ChunkStreamer, type ChunkStreamStats } from '../world/ChunkStreamer';
 import { chunkAt, chunkId, isChunkManifest, type ChunkManifest, type ChunkFile } from '../world/chunkGrid';
-import { isWorldMap } from '../world/osm';
+import { isWorldMap, type Point2 } from '../world/osm';
+import { BuildingCollisionField } from '../world/buildingCollisions';
 import {
   Engine, Scene, FreeCamera, Vector3, HemisphericLight, DirectionalLight,
   MeshBuilder, StandardMaterial, Color3, Color4, Mesh, Scalar, Ray
@@ -24,6 +25,8 @@ const GRAVITY = -18;
 const EYE_HEIGHT = 1.65;
 const PLAYER_HEIGHT = 1.8;
 const PLAYER_RADIUS = 0.35;
+// Keep a small clearance from OSM footprint boundaries.
+const BUILDING_CLEARANCE = PLAYER_RADIUS + 0.10;
 
 export class EuropaGame {
   private readonly engine: Engine;
@@ -47,6 +50,9 @@ export class EuropaGame {
   private lastStreamTile = '';
   private readonly streamedGeometry = new Map<string, ChunkGeometry>();
   private boundaryMeshes: Mesh[] = [];
+  private readonly buildingCollisions = new BuildingCollisionField();
+  // Last known non-overlapping ground position. Also powers the R unstuck key.
+  private lastSafePosition: Point2 = { x: 0, z: -7 };
 
   constructor(private readonly canvas: HTMLCanvasElement, callbacks: GameCallbacks) {
     this.callbacks = callbacks;
@@ -194,9 +200,17 @@ export class EuropaGame {
           if (this.disposed || !this.chunkRenderer) return;
           const geometry = this.chunkRenderer.render(chunk);
           this.streamedGeometry.set(chunk.id, geometry);
-          if (this.streamActive) this.syncStreamSolids();
+          this.buildingCollisions.setGroup('tile:' + chunk.id, chunk.buildings);
+          if (this.streamActive) {
+            this.syncStreamSolids();
+            // Late arriving OSM data can surround the player. Never trap them.
+            if (this.buildingCollisions.isBlocked({
+              x: this.playerCollider.position.x, z: this.playerCollider.position.z
+            }, BUILDING_CLEARANCE)) this.respawnPlayer();
+          }
         },
         onUnload: id => {
+          this.buildingCollisions.removeGroup('tile:' + id);
           const geometry = this.streamedGeometry.get(id);
           if (!geometry) return;
           for (const mesh of geometry.meshes) mesh.dispose();
@@ -222,18 +236,26 @@ export class EuropaGame {
         return;
       }
 
+      const safeSpawn = this.buildingCollisions.findSafePosition(
+        manifest.spawn, BUILDING_CLEARANCE, manifest.halfSizeMeters, 150
+      );
+      if (!safeSpawn) {
+        console.warn('EUROPA: no clear streaming spawn found; reverting to 002B map.');
+        streamer.dispose();
+        this.streamer = null;
+        this.chunkRenderer.dispose();
+        this.chunkRenderer = null;
+        this.chunkManifest = null;
+        await this.tryLoadOSMWorld();
+        return;
+      }
+
       // The OSM world is ready: remove only the pre-existing test scene.
       oldMeshes.forEach(mesh => mesh.dispose());
       this.boundaryMeshes = this.chunkRenderer.createWorldBoundary();
       this.streamActive = true;
       this.syncStreamSolids();
-      this.playerCollider.position.set(
-        manifest.spawn.x, PLAYER_HEIGHT / 2 + 0.03, manifest.spawn.z
-      );
-      this.camera.position.copyFrom(this.playerCollider.position);
-      this.camera.position.y += EYE_HEIGHT - PLAYER_HEIGHT / 2;
-      this.verticalVelocity = 0;
-      this.grounded = false;
+      this.teleportPlayer(safeSpawn);
       this.lastStreamTile = id;
       this.callbacks.onWorldChange('stream');
       this.callbacks.onStreamStats(streamer.stats);
@@ -292,11 +314,15 @@ export class EuropaGame {
       this.solids.length = 0;
       const world = renderOSMWorld(this.scene, map);
       this.solids.push(...world.solids);
-      this.playerCollider.position.set(world.spawn.x, PLAYER_HEIGHT / 2 + 0.03, world.spawn.z);
-      this.camera.position.copyFrom(this.playerCollider.position);
-      this.camera.position.y += EYE_HEIGHT - PLAYER_HEIGHT / 2;
-      this.verticalVelocity = 0;
-      this.grounded = false;
+      this.buildingCollisions.clear();
+      this.buildingCollisions.setGroup('static', map.buildings);
+      const safe = this.buildingCollisions.findSafePosition(
+        world.spawn, BUILDING_CLEARANCE, map.halfSizeMeters, 150
+      );
+      if (!safe) {
+        console.warn('EUROPA: could not find a clear static OSM spawn; use R if trapped.');
+      }
+      this.teleportPlayer(safe ?? world.spawn);
       this.callbacks.onWorldChange('osm');
       this.publishStats();
       console.info('EUROPA: loaded OpenStreetMap world:', map.roads.length, 'road segments,', map.buildings.length, 'buildings');
@@ -305,7 +331,37 @@ export class EuropaGame {
     }
   }
 
+  private teleportPlayer(position: Point2): void {
+    this.playerCollider.position.set(position.x, PLAYER_HEIGHT / 2 + 0.03, position.z);
+    this.camera.position.copyFrom(this.playerCollider.position);
+    this.camera.position.y += EYE_HEIGHT - PLAYER_HEIGHT / 2;
+    this.verticalVelocity = 0;
+    this.grounded = false;
+    this.lastSafePosition = { ...position };
+    this.publishStats();
+  }
+
+  private respawnPlayer(): void {
+    // Prefer the last safe position; search outward if newly streamed
+    // buildings obstruct it. Reset height too, for falls below missing ground.
+    const halfSize = this.chunkManifest?.halfSizeMeters ?? 500;
+    const position = this.buildingCollisions.findSafePosition(
+      this.lastSafePosition, BUILDING_CLEARANCE, halfSize, 150
+    );
+    if (!position) {
+      console.warn('EUROPA: could not find an unblocked respawn position.');
+      return;
+    }
+    this.teleportPlayer(position);
+    console.info('EUROPA: player repositioned at safe coordinates', position);
+  }
+
   private onKeyDown = (event: KeyboardEvent): void => {
+    if (event.code === 'KeyR' && !event.repeat) {
+      event.preventDefault();
+      this.respawnPlayer();
+      return;
+    }
     if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.code)) event.preventDefault();
     this.keys.add(event.code);
   };
@@ -385,7 +441,32 @@ export class EuropaGame {
       this.grounded = false;
     }
     if (!this.grounded) this.verticalVelocity += GRAVITY * dt;
-    this.playerCollider.moveWithCollisions(new Vector3(direction.x * speed * dt, this.verticalVelocity * dt, direction.z * speed * dt));
+    const before: Point2 = {
+      x: this.playerCollider.position.x, z: this.playerCollider.position.z
+    };
+    if (this.buildingCollisions.isBlocked(before, BUILDING_CLEARANCE)) {
+      this.respawnPlayer();
+      return;
+    }
+    // OSM footprints, not visual triangle faces, are authoritative for walls.
+    // The short swept movement cannot cross building outlines, even at sprint
+    // speed or when mesh winding makes a facade appear one-sided.
+    const permitted = this.buildingCollisions.move(before, {
+      x: direction.x * speed * dt, z: direction.z * speed * dt
+    }, BUILDING_CLEARANCE);
+    this.playerCollider.moveWithCollisions(new Vector3(
+      permitted.x - before.x, this.verticalVelocity * dt, permitted.z - before.z
+    ));
+    const after: Point2 = {
+      x: this.playerCollider.position.x, z: this.playerCollider.position.z
+    };
+    if (this.buildingCollisions.isBlocked(after, BUILDING_CLEARANCE)) {
+      // Collision engine can still nudge the collider on its own axes.
+      this.playerCollider.position.x = before.x;
+      this.playerCollider.position.z = before.z;
+    } else {
+      this.lastSafePosition = after;
+    }
     this.camera.position.copyFrom(this.playerCollider.position);
     this.camera.position.y += EYE_HEIGHT - PLAYER_HEIGHT / 2;
   }
@@ -394,6 +475,7 @@ export class EuropaGame {
     if (this.disposed) return;
     this.disposed = true;
     this.streamAbort.abort();
+    this.buildingCollisions.clear();
     this.streamer?.dispose();
     this.streamer = null;
     this.chunkRenderer?.dispose();

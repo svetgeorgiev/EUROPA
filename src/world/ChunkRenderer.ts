@@ -33,40 +33,71 @@ export class ChunkRenderer {
       minZ: origin.z + chunk.row * size,
       maxZ: origin.z + (chunk.row + 1) * size
     };
-    const ground = MeshBuilder.CreateGround(
-      'chunk-ground-' + chunk.id, { width: size, height: size }, this.scene
-    );
-    ground.position.x = origin.x + (chunk.col + 0.5) * size;
-    ground.position.z = origin.z + (chunk.row + 0.5) * size;
-    ground.material = this.materials.ground;
-    ground.checkCollisions = true;
-    const meshes: Mesh[] = [ground];
-    const solids: Mesh[] = [ground];
+    const meshes: Mesh[] = [];
+    const solids: Mesh[] = [];
 
-    const roads = makeRoadSurface(this.scene, 'chunk-roads-' + chunk.id,
-      chunk.roads.filter(road => !PEDESTRIAN.has(road.highway)), this.materials.road, bounds);
-    const paths = makeRoadSurface(this.scene, 'chunk-paths-' + chunk.id,
-      chunk.roads.filter(road => PEDESTRIAN.has(road.highway)), this.materials.path, bounds);
-    if (roads) meshes.push(roads);
-    if (paths) meshes.push(paths);
+    const warn = (label: string, error: unknown): void => {
+      console.warn('EUROPA tile ' + chunk.id + ': ' + label + ' was skipped: ', error);
+    };
 
-    meshes.push(...renderProceduralRoadDetails(
-      this.scene, 'chunk-' + chunk.id, chunk.roads, this.materials, bounds
-    ));
+    try {
+      // Ground and its collision are essential for every loaded chunk.
+      const ground = MeshBuilder.CreateGround(
+        'chunk-ground-' + chunk.id, { width: size, height: size }, this.scene
+      );
+      meshes.push(ground);
+      ground.position.x = origin.x + (chunk.col + 0.5) * size;
+      ground.position.z = origin.z + (chunk.row + 0.5) * size;
+      ground.material = this.materials.ground;
+      ground.checkCollisions = true;
+      solids.push(ground);
 
-    for (const footprint of chunk.buildings) {
-      const building = makeBuilding(this.scene, footprint,
-        this.materials.walls[Math.abs(footprint.id) % this.materials.walls.length]);
-      if (!building) continue;
-      meshes.push(building);
-      solids.push(building);
+      // OSM road surfaces are visual-only. A malformed complex intersection
+      // falls back to basic road ribbons rather than losing the entire tile.
+      try {
+        const roads = makeRoadSurface(this.scene, 'chunk-roads-' + chunk.id,
+          chunk.roads.filter(road => !PEDESTRIAN.has(road.highway)), this.materials.road, bounds);
+        if (roads) meshes.push(roads);
+      } catch (error) { warn('road surface', error); }
+
+      try {
+        const paths = makeRoadSurface(this.scene, 'chunk-paths-' + chunk.id,
+          chunk.roads.filter(road => PEDESTRIAN.has(road.highway)), this.materials.path, bounds);
+        if (paths) meshes.push(paths);
+      } catch (error) { warn('footpaths', error); }
+
+      try {
+        meshes.push(...renderProceduralRoadDetails(
+          this.scene, 'chunk-' + chunk.id, chunk.roads, this.materials, bounds
+        ));
+      } catch (error) { warn('road markings', error); }
+
+      for (const footprint of chunk.buildings) {
+        try {
+          const building = makeBuilding(this.scene, footprint,
+            this.materials.walls[Math.abs(footprint.id) % this.materials.walls.length]);
+          if (!building) continue;
+          meshes.push(building);
+          // The ground alone handles vertical collision. Footprint collision
+          // is registered separately by EuropaGame even if a facade fails.
+          solids.push(building);
+        } catch (error) { warn('building ' + footprint.id, error); }
+      }
+
+      try {
+        const facades = renderProceduralFacadeDetails(
+          this.scene, 'chunk-' + chunk.id, chunk.buildings, this.materials
+        );
+        if (facades) meshes.push(facades);
+      } catch (error) { warn('facade details', error); }
+
+      return { meshes, solids };
+    } catch (error) {
+      // If the essential ground mesh fails, roll back everything created in
+      // this render attempt so a later manual retry cannot leak resources.
+      for (const mesh of meshes) mesh.dispose();
+      throw error;
     }
-
-    const facades = renderProceduralFacadeDetails(
-      this.scene, 'chunk-' + chunk.id, chunk.buildings, this.materials
-    );
-    if (facades) meshes.push(facades);
-    return { meshes, solids };
   }
 
   /** Invisible collision walls mark the edge of this finite 1 km prototype. */

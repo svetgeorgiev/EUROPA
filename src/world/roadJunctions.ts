@@ -1,6 +1,7 @@
 import earcut from 'earcut';
 import polygonClipping from 'polygon-clipping';
 import type { Point2, RoadSegment } from './osm.ts';
+import { buildRoadGeometry } from './meshGeometry.ts';
 
 /** Exact tile clipping in local world metres; north is +Z, east is +X. */
 export interface MapBounds { minX: number; maxX: number; minZ: number; maxZ: number; }
@@ -159,4 +160,34 @@ export function roadDecorIntervals(
   }
   if (length - cursor >= 1) intervals.push([cursor, length]);
   return intervals;
+}
+
+
+/**
+ * Geometry fallback for malformed/problematic OSM road topology.
+ * If polygon union fails for one tile, render its source road ribbons rather
+ * than dropping the entire chunk (and therefore the ground/buildings).
+ *
+ * The fallback can show overlaps at intersections. It is a warning path,
+ * never represented as the preferred finished junction geometry.
+ * The optional merge function is injectable for deterministic tests.
+ */
+export function mergeRoadSurfaceSafely(
+  roads: readonly RoadSegment[],
+  bounds?: MapBounds,
+  onWarning: (message: string) => void = () => {},
+  merge: typeof mergeRoadSurface = mergeRoadSurface
+): MergedRoadGeometry {
+  try {
+    return merge(roads, bounds);
+  } catch (error) {
+    onWarning('Road polygon merge failed; using simple road ribbons. ' + String(error));
+    const fallback = buildRoadGeometry(roads);
+    return {
+      positions: fallback.positions,
+      indices: fallback.indices,
+      normals: fallback.normals,
+      uvs: fallback.uvs
+    };
+  }
 }

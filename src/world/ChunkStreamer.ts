@@ -11,6 +11,8 @@ export interface ChunkStreamStats {
   loading: number;
   failed: number;
   available: number;
+  failedIds: string[];
+  lastError: string;
 }
 
 export interface ChunkStreamHooks {
@@ -22,15 +24,16 @@ export interface ChunkStreamHooks {
 }
 
 /**
- * Pure chunk lifecycle manager: no Babylon.js, Vue, DOM or networking.
- * Rendering and fetching are injected, allowing deterministic tests.
+ * Pure tile lifecycle: no Babylon, DOM or Vue dependencies.
+ * A failed tile is held until the player leaves the neighbourhood or
+ * explicitly calls retryFailed(); never spin in a render-loop retry storm.
  */
 export class ChunkStreamer {
   private readonly manifest: ChunkManifest;
   private readonly hooks: ChunkStreamHooks;
   private readonly loaded = new Set<string>();
   private readonly pending = new Map<string, Promise<void>>();
-  private readonly failures = new Set<string>();
+  private readonly failures = new Map<string, string>();
   private desired = new Set<string>();
   private current = '';
   private disposed = false;
@@ -48,7 +51,9 @@ export class ChunkStreamer {
       desired: this.desired.size,
       loading: this.pending.size,
       failed: this.failures.size,
-      available: this.manifest.chunks.length
+      available: this.manifest.chunks.length,
+      failedIds: [...this.failures.keys()],
+      lastError: [...this.failures.values()].at(-1) ?? ''
     };
   }
 
@@ -56,11 +61,25 @@ export class ChunkStreamer {
     return this.loaded.has(id);
   }
 
-  /** Loads a 3x3 neighbourhood, not the whole 1km map. */
+  private queueDesiredTiles(): Promise<void>[] {
+    const queued: Promise<void>[] = [];
+    for (const id of this.desired) {
+      if (this.loaded.has(id) || this.pending.has(id) || this.failures.has(id)) continue;
+      // Schedule after recording in pending so a synchronous callback failure
+      // cannot leave a completed request stuck as "loading" forever.
+      const promise = Promise.resolve().then(() => this.fetchAndActivate(id));
+      this.pending.set(id, promise);
+      queued.push(promise);
+    }
+    this.publish();
+    return queued;
+  }
+
+  /** Load a 3x3 neighbourhood around the player; release distant tiles. */
   async moveTo(point: Point2): Promise<void> {
     if (this.disposed) return;
     const tile = chunkAt(point, this.manifest);
-    if (!tile) return; // World boundary is handled by the game collider.
+    if (!tile) return;
     const next = chunkId(tile.col, tile.row);
     if (this.current === next) {
       await Promise.all([...this.pending.values()]);
@@ -75,19 +94,23 @@ export class ChunkStreamer {
         this.hooks.onUnload(id);
       }
     }
-    // Retry a failed tile only after the player has left its neighbourhood.
-    for (const id of [...this.failures]) {
+    // Leaving a neighbourhood clears its failure; returning permits a retry.
+    for (const id of [...this.failures.keys()]) {
       if (!this.desired.has(id)) this.failures.delete(id);
     }
-    const loads: Promise<void>[] = [];
-    for (const id of this.desired) {
-      if (this.loaded.has(id) || this.pending.has(id) || this.failures.has(id)) continue;
-      const loading = Promise.resolve().then(() => this.fetchAndActivate(id));
-      this.pending.set(id, loading);
-      loads.push(loading);
-    }
-    this.publish();
-    await Promise.all(loads);
+    await Promise.all(this.queueDesiredTiles());
+  }
+
+  /**
+   * Manual one-shot retry (T in-game). No automatic repeated network calls.
+   * The failure reason remains visible until the tile actually loads.
+   */
+  async retryFailed(): Promise<void> {
+    if (this.disposed) return;
+    const ids = [...this.failures.keys()].filter(id => this.desired.has(id));
+    if (!ids.length) return;
+    for (const id of ids) this.failures.delete(id);
+    await Promise.all(this.queueDesiredTiles());
   }
 
   private async fetchAndActivate(id: string): Promise<void> {
@@ -97,10 +120,12 @@ export class ChunkStreamer {
       if (this.disposed || !this.desired.has(id)) return;
       this.hooks.onLoad(chunk);
       this.loaded.add(id);
+      this.failures.delete(id);
     } catch (error) {
       if (this.disposed || !this.desired.has(id)) return;
-      this.failures.add(id);
-      this.hooks.onWarning?.('Chunk ' + id + ' failed: ' + String(error));
+      const reason = error instanceof Error ? error.message : String(error);
+      this.failures.set(id, reason);
+      this.hooks.onWarning?.('Chunk ' + id + ' failed: ' + reason);
     } finally {
       this.pending.delete(id);
       if (!this.disposed) this.publish();
@@ -118,7 +143,6 @@ export class ChunkStreamer {
     for (const id of this.loaded) this.hooks.onUnload(id);
     this.loaded.clear();
     this.failures.clear();
-    // Pending requests can complete later but will not activate geometry.
-    this.pending.clear();
+    this.pending.clear(); // Late network replies are ignored by fetchAndActivate.
   }
 }

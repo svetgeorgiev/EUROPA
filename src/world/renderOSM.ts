@@ -1,6 +1,6 @@
 import { Scene, Mesh, MeshBuilder, StandardMaterial, VertexData } from '@babylonjs/core';
 import { buildBuildingGeometry } from './meshGeometry.ts';
-import { mergeRoadSurface, type MapBounds } from './roadJunctions.ts';
+import { mergeRoadSurfaceSafely, type MapBounds } from './roadJunctions.ts';
 import {
   createWorldMaterials, renderProceduralFacadeDetails, renderProceduralRoadDetails
 } from './worldAppearance.ts';
@@ -13,7 +13,8 @@ export function makeRoadSurface(
   scene: Scene, name: string, roads: RoadSegment[], mat: StandardMaterial,
   tileBounds?: MapBounds
 ): Mesh | null {
-  const data = mergeRoadSurface(roads, tileBounds);
+  const data = mergeRoadSurfaceSafely(roads, tileBounds,
+    warning => console.warn('EUROPA ' + name + ': ' + warning));
   if (!data.indices.length) return null;
   const mesh = new Mesh(name, scene);
   const vertices = new VertexData();

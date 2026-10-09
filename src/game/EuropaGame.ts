@@ -371,6 +371,11 @@ export class EuropaGame {
       this.respawnPlayer();
       return;
     }
+    if (event.code === 'KeyT' && !event.repeat && this.streamActive) {
+      event.preventDefault();
+      void this.streamer?.retryFailed();
+      return;
+    }
     if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.code)) event.preventDefault();
     this.keys.add(event.code);
   };

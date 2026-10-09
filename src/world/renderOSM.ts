@@ -1,5 +1,6 @@
 import { Scene, Mesh, MeshBuilder, StandardMaterial, VertexData } from '@babylonjs/core';
-import { buildBuildingGeometry, buildRoadGeometry } from './meshGeometry.ts';
+import { buildBuildingGeometry } from './meshGeometry.ts';
+import { mergeRoadSurface, type MapBounds } from './roadJunctions.ts';
 import {
   createWorldMaterials, renderProceduralFacadeDetails, renderProceduralRoadDetails
 } from './worldAppearance.ts';
@@ -9,9 +10,10 @@ export interface RenderedWorld { solids: Mesh[]; spawn: Point2; }
 
 /** A road's visible geometry; flat, non-collidable ground below handles physics. */
 export function makeRoadSurface(
-  scene: Scene, name: string, roads: RoadSegment[], mat: StandardMaterial
+  scene: Scene, name: string, roads: RoadSegment[], mat: StandardMaterial,
+  tileBounds?: MapBounds
 ): Mesh | null {
-  const data = buildRoadGeometry(roads);
+  const data = mergeRoadSurface(roads, tileBounds);
   if (!data.indices.length) return null;
   const mesh = new Mesh(name, scene);
   const vertices = new VertexData();

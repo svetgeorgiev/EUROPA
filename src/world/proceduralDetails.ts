@@ -1,4 +1,5 @@
 import type { BuildingFootprint, Point2, RoadSegment } from './osm.ts';
+import { roadDecorIntervals, type MapBounds } from './roadJunctions.ts';
 
 export interface DetailGeometry {
   positions: number[];
@@ -14,14 +15,45 @@ function blank(colors = false): DetailGeometry {
     : { positions: [], indices: [], normals: [] };
 }
 
-/** A double-sided, flat horizontal ribbon. All points use world X/Z metres. */
+/**
+ * Clip each decorative road strip against its owning 250m tile. This avoids
+ * the overlapping cross-tile quads that previously produced large dark patches.
+ */
+function clipRect(poly: Point2[], bounds: MapBounds): Point2[] {
+  const planes: [keyof Point2, number, boolean][] = [
+    ['x', bounds.minX, true], ['x', bounds.maxX, false],
+    ['z', bounds.minZ, true], ['z', bounds.maxZ, false]
+  ];
+  let output = poly;
+  for (const [axis, value, keepGreater] of planes) {
+    const input = output;
+    output = [];
+    if (!input.length) break;
+    const inside = (p: Point2) => keepGreater ? p[axis] >= value - 1e-9 : p[axis] <= value + 1e-9;
+    const intersect = (a: Point2, b: Point2): Point2 => {
+      const difference = b[axis] - a[axis];
+      const t = Math.abs(difference) < 1e-12 ? 0 : (value - a[axis]) / difference;
+      return { x: a.x + (b.x - a.x) * t, z: a.z + (b.z - a.z) * t };
+    };
+    for (let i = 0; i < input.length; i++) {
+      const a = input[i], b = input[(i + 1) % input.length];
+      const ia = inside(a), ib = inside(b);
+      if (ia && ib) output.push(b);
+      else if (ia && !ib) output.push(intersect(a, b));
+      else if (!ia && ib) output.push(intersect(a, b), b);
+    }
+  }
+  return output;
+}
+
 function ribbon(
   mesh: DetailGeometry,
   a: Point2,
   b: Point2,
   offsetFromCenter: number,
   width: number,
-  y: number
+  y: number,
+  clip?: MapBounds
 ): void {
   const dx = b.x - a.x, dz = b.z - a.z;
   const length = Math.hypot(dx, dz);
@@ -29,15 +61,26 @@ function ribbon(
   const nx = -dz / length, nz = dx / length;
   const left = offsetFromCenter - width / 2;
   const right = offsetFromCenter + width / 2;
+  const poly = [
+    { x: a.x + nx * left, z: a.z + nz * left },
+    { x: a.x + nx * right, z: a.z + nz * right },
+    { x: b.x + nx * right, z: b.z + nz * right },
+    { x: b.x + nx * left, z: b.z + nz * left }
+  ];
+  const vertices = clip ? clipRect(poly, clip) : poly;
+  if (vertices.length < 3) return;
   const base = mesh.positions.length / 3;
-  mesh.positions.push(
-    a.x + nx * left, y, a.z + nz * left,
-    a.x + nx * right, y, a.z + nz * right,
-    b.x + nx * left, y, b.z + nz * left,
-    b.x + nx * right, y, b.z + nz * right
-  );
-  mesh.indices.push(base, base + 1, base + 2, base + 1, base + 3, base + 2);
-  for (let i = 0; i < 4; i++) mesh.normals.push(0, 1, 0);
+  for (const p of vertices) {
+    mesh.positions.push(p.x, y, p.z);
+    mesh.normals.push(0, 1, 0);
+  }
+  for (let i = 1; i < vertices.length - 1; i++) {
+    const a = vertices[0], b = vertices[i], c = vertices[i+1];
+    const crossY = (b.z - a.z) * (c.x - a.x) - (b.x - a.x) * (c.z - a.z);
+    if (Math.abs(crossY) < 1e-10) continue;
+    if (crossY > 0) mesh.indices.push(base, base + i, base + i + 1);
+    else mesh.indices.push(base, base + i + 1, base + i);
+  }
 }
 
 const PAVED = new Set([
@@ -48,30 +91,36 @@ const PAVED = new Set([
  * Procedurally inferred details, NOT surveyed OSM sidewalks or markings.
  * Kept below a modest geometry budget, with one merged mesh per tile/type.
  */
-export function buildRoadDecor(roads: readonly RoadSegment[]): {
-  shoulders: DetailGeometry;
-  markings: DetailGeometry;
-} {
+export function buildRoadDecor(
+  roads: readonly RoadSegment[],
+  bounds?: MapBounds
+): { shoulders: DetailGeometry; markings: DetailGeometry } {
   const shoulders = blank();
   const markings = blank();
-  for (const road of roads) {
+  for (let index = 0; index < roads.length; index++) {
+    const road = roads[index];
     if (!PAVED.has(road.highway) || road.widthMeters < 5) continue;
-    for (const side of [-1, 1]) {
-      ribbon(shoulders, road.a, road.b,
-        side * (road.widthMeters / 2 + 0.68), 1.15, 0.065);
-    }
-    if (road.widthMeters < 6 || road.highway === 'living_street') continue;
     const dx = road.b.x - road.a.x, dz = road.b.z - road.a.z;
     const length = Math.hypot(dx, dz);
-    if (!Number.isFinite(length) || length < 3.8) continue;
+    if (!Number.isFinite(length) || length < 0.5) continue;
     const ux = dx / length, uz = dz / length;
-    // Deliberately faded 2.5m dashed centre markings. Each OSM way segment
-    // starts its own dashes; real marked road data is not yet available.
-    for (let start = 0.6; start + 2.5 < length; start += 10) {
-      ribbon(markings,
-        { x: road.a.x + ux * start, z: road.a.z + uz * start },
-        { x: road.a.x + ux * (start + 2.5), z: road.a.z + uz * (start + 2.5) },
-        0, 0.11, 0.072);
+    const position = (distance: number): Point2 => ({
+      x: road.a.x + ux * distance, z: road.a.z + uz * distance
+    });
+
+    // No pavements or dashed paint across the centre of another street.
+    // Ordinary sections retain their markings and edge strips.
+    for (const [begin, end] of roadDecorIntervals(roads, index, 6.5)) {
+      if (end - begin < 1) continue;
+      for (const side of [-1, 1]) {
+        ribbon(shoulders, position(begin), position(end),
+          side * (road.widthMeters / 2 + 0.68), 1.15, 0.065, bounds);
+      }
+      if (road.widthMeters < 6 || road.highway === 'living_street') continue;
+      for (let start = begin + 0.6; start + 2.5 < end; start += 10) {
+        ribbon(markings, position(start), position(start + 2.5),
+          0, 0.11, 0.072, bounds);
+      }
     }
   }
   return { shoulders, markings };

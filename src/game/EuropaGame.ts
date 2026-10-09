@@ -9,7 +9,7 @@ import {
   MeshBuilder, StandardMaterial, Color3, Color4, Mesh, Scalar, Ray
 } from '@babylonjs/core';
 
-export interface GameStats { fps: number; x: number; y: number; z: number; grounded: boolean; }
+export interface GameStats { fps: number; x: number; y: number; z: number; yaw: number; grounded: boolean; }
 export interface GameCallbacks {
   onStats: (stats: GameStats) => void;
   onLockChange: (locked: boolean) => void;
@@ -418,7 +418,7 @@ export class EuropaGame {
 
   private publishStats(): void {
     const p = this.camera.position;
-    this.callbacks.onStats({ fps: Math.round(this.engine.getFps()) || 0, x: p.x, y: p.y, z: p.z, grounded: this.grounded });
+    this.callbacks.onStats({ fps: Math.round(this.engine.getFps()) || 0, x: p.x, y: p.y, z: p.z, yaw: this.yaw, grounded: this.grounded });
   }
 
   private updateMovement(dt: number): void {

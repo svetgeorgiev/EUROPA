@@ -4,6 +4,7 @@ import {
 import {
   buildFacadeDecor, buildRoadDecor, type DetailGeometry
 } from './proceduralDetails.ts';
+import type { MapBounds } from './roadJunctions.ts';
 
 export const WORLD_COLORS = {
   grass: '#586b56',
@@ -134,9 +135,10 @@ export function renderProceduralRoadDetails(
   scene: Scene,
   prefix: string,
   roads: readonly import('./osm.ts').RoadSegment[],
-  materials: WorldMaterials
+  materials: WorldMaterials,
+  bounds?: MapBounds
 ): Mesh[] {
-  const decorations = buildRoadDecor(roads);
+  const decorations = buildRoadDecor(roads, bounds);
   const shoulders = makeDetailMesh(scene, prefix + '-shoulders',
     decorations.shoulders, materials.shoulder);
   const markings = makeDetailMesh(scene, prefix + '-lane-paint',

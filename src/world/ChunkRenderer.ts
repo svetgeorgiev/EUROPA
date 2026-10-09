@@ -5,6 +5,7 @@ import {
   renderProceduralRoadDetails, type WorldMaterials
 } from './worldAppearance.ts';
 import type { ChunkFile, ChunkManifest } from './chunkGrid';
+import type { MapBounds } from './roadJunctions.ts';
 
 export interface ChunkGeometry { meshes: Mesh[]; solids: Mesh[]; }
 const PEDESTRIAN = new Set(['footway', 'path', 'pedestrian', 'cycleway', 'track']);
@@ -26,6 +27,12 @@ export class ChunkRenderer {
 
   render(chunk: ChunkFile): ChunkGeometry {
     const { tileSizeMeters: size, origin } = this.manifest;
+    const bounds: MapBounds = {
+      minX: origin.x + chunk.col * size,
+      maxX: origin.x + (chunk.col + 1) * size,
+      minZ: origin.z + chunk.row * size,
+      maxZ: origin.z + (chunk.row + 1) * size
+    };
     const ground = MeshBuilder.CreateGround(
       'chunk-ground-' + chunk.id, { width: size, height: size }, this.scene
     );
@@ -37,14 +44,14 @@ export class ChunkRenderer {
     const solids: Mesh[] = [ground];
 
     const roads = makeRoadSurface(this.scene, 'chunk-roads-' + chunk.id,
-      chunk.roads.filter(road => !PEDESTRIAN.has(road.highway)), this.materials.road);
+      chunk.roads.filter(road => !PEDESTRIAN.has(road.highway)), this.materials.road, bounds);
     const paths = makeRoadSurface(this.scene, 'chunk-paths-' + chunk.id,
-      chunk.roads.filter(road => PEDESTRIAN.has(road.highway)), this.materials.path);
+      chunk.roads.filter(road => PEDESTRIAN.has(road.highway)), this.materials.path, bounds);
     if (roads) meshes.push(roads);
     if (paths) meshes.push(paths);
 
     meshes.push(...renderProceduralRoadDetails(
-      this.scene, 'chunk-' + chunk.id, chunk.roads, this.materials
+      this.scene, 'chunk-' + chunk.id, chunk.roads, this.materials, bounds
     ));
 
     for (const footprint of chunk.buildings) {

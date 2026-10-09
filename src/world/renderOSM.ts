@@ -1,88 +1,73 @@
-import {
-  Scene, Mesh, MeshBuilder, StandardMaterial, Color3, Vector3, VertexData
-} from '@babylonjs/core';
-import earcut from 'earcut';
-import type { BuildingFootprint, Point2, RoadSegment, WorldMap } from './osm';
+import { Scene, Mesh, MeshBuilder, StandardMaterial, Color3, VertexData } from '@babylonjs/core';
+import { buildBuildingGeometry, buildRoadGeometry } from './meshGeometry.ts';
+import type { BuildingFootprint, Point2, RoadSegment, WorldMap } from './osm.ts';
 
 export interface RenderedWorld { solids: Mesh[]; spawn: Point2; }
 
-export function makeMaterial(scene: Scene, name: string, hex: string): StandardMaterial {
+/**
+ * EUROPA-002C.2: daylight-readable prototype palette.
+ * These are intentionally stylised materials, not surveyed facade textures.
+ */
+export const WORLD_COLORS = {
+  grass: '#74876b',
+  roads: '#798387',
+  paths: '#afa58d',
+  walls: ['#c7b9a3', '#c0aa96', '#adb8b2', '#d1bcad'],
+} as const;
+
+export function makeMaterial(
+  scene: Scene,
+  name: string,
+  hex: string,
+  emissiveStrength = 0.2
+): StandardMaterial {
   const mat = new StandardMaterial(name, scene);
-  mat.diffuseColor = Color3.FromHexString(hex);
-  mat.specularColor = Color3.Black();
+  const color = Color3.FromHexString(hex);
+  mat.diffuseColor = color;
+  mat.ambientColor = color.scale(0.65);
+  // Low, controlled self-illumination stops north-facing walls and roads
+  // going completely black without flattening their normal-based lighting.
+  mat.emissiveColor = color.scale(emissiveStrength);
+  mat.specularColor = new Color3(0.04, 0.04, 0.04);
+  mat.specularPower = 24;
   mat.backFaceCulling = false;
+  mat.twoSidedLighting = true;
   return mat;
 }
 
-export function makeRoadSurface(scene: Scene, name: string, roads: RoadSegment[], mat: StandardMaterial): Mesh | null {
-  const positions: number[] = [];
-  const indices: number[] = [];
-  for (const road of roads) {
-    const dx = road.b.x - road.a.x;
-    const dz = road.b.z - road.a.z;
-    const len = Math.hypot(dx, dz);
-    if (len < 0.2) continue;
-    const halfWidth = road.widthMeters / 2;
-    const nx = (-dz / len) * halfWidth;
-    const nz = (dx / len) * halfWidth;
-    const index = positions.length / 3;
-    positions.push(
-      road.a.x + nx, 0.035, road.a.z + nz,
-      road.a.x - nx, 0.035, road.a.z - nz,
-      road.b.x + nx, 0.035, road.b.z + nz,
-      road.b.x - nx, 0.035, road.b.z - nz
-    );
-    indices.push(index, index + 2, index + 1, index + 1, index + 2, index + 3);
-  }
-  if (!indices.length) return null;
+export function makeRoadSurface(
+  scene: Scene, name: string, roads: RoadSegment[], mat: StandardMaterial
+): Mesh | null {
+  const data = buildRoadGeometry(roads);
+  if (!data.indices.length) return null;
   const mesh = new Mesh(name, scene);
   const vertices = new VertexData();
-  vertices.positions = positions;
-  vertices.indices = indices;
-  const normals: number[] = [];
-  VertexData.ComputeNormals(positions, indices, normals);
-  vertices.normals = normals;
+  vertices.positions = data.positions;
+  vertices.indices = data.indices;
+  vertices.normals = data.normals;
   vertices.applyToMesh(mesh);
   mesh.material = mat;
   mesh.isPickable = false;
+  mesh.checkCollisions = false;
   return mesh;
 }
 
-export function makeBuilding(scene: Scene, building: BuildingFootprint, mat: StandardMaterial): Mesh | null {
-  const poly = building.outline;
-  if (poly.length < 3 || poly.length > 300) return null;
-  const coords = poly.flatMap(p => [p.x, p.z]);
-  const roofTriangles = earcut(coords);
-  if (!roofTriangles.length) return null;
-  const height = building.heightMeters;
-  const positions: number[] = [];
-  const indices: number[] = [];
-  // Two vertices per footprint corner: ground, roof.
-  for (const p of poly) positions.push(p.x, 0, p.z, p.x, height, p.z);
-  for (let i = 0; i < poly.length; i++) {
-    const next = (i + 1) % poly.length;
-    const a = i * 2, b = next * 2;
-    indices.push(a, a + 1, b, b, a + 1, b + 1);
-  }
-  // Winding must face +Y for upward roof normals in Babylon's X/Z plane.
-  for (let i = 0; i < roofTriangles.length; i += 3) {
-    const ia = roofTriangles[i], ib = roofTriangles[i + 1], ic = roofTriangles[i + 2];
-    const a = poly[ia], b = poly[ib], c = poly[ic];
-    const yNormal = (b.z - a.z) * (c.x - a.x) - (b.x - a.x) * (c.z - a.z);
-    if (yNormal >= 0) indices.push(ia * 2 + 1, ib * 2 + 1, ic * 2 + 1);
-    else indices.push(ia * 2 + 1, ic * 2 + 1, ib * 2 + 1);
-  }
+export function makeBuilding(
+  scene: Scene, building: BuildingFootprint, mat: StandardMaterial
+): Mesh | null {
+  const data = buildBuildingGeometry(building);
+  if (!data) return null;
   const mesh = new Mesh('osm-building-' + building.id, scene);
-  const vertexData = new VertexData();
-  vertexData.positions = positions;
-  vertexData.indices = indices;
-  const normals: number[] = [];
-  VertexData.ComputeNormals(positions, indices, normals);
-  vertexData.normals = normals;
-  vertexData.applyToMesh(mesh);
+  const vertices = new VertexData();
+  vertices.positions = data.positions;
+  vertices.indices = data.indices;
+  vertices.normals = data.normals;
+  vertices.colors = data.colors;
+  vertices.applyToMesh(mesh);
+  mesh.useVertexColors = true;
   mesh.material = mat;
-  // The visual outline is an infinitely thin, potentially single-sided mesh.
-  // Physics is enforced by BuildingCollisionField using the actual polygon.
+  // Walls are render-only. Sealed footprint collision belongs to
+  // BuildingCollisionField; don't re-enable Babylon visual-mesh collision.
   mesh.checkCollisions = false;
   mesh.isPickable = false;
   return mesh;
@@ -90,15 +75,13 @@ export function makeBuilding(scene: Scene, building: BuildingFootprint, mat: Sta
 
 export function renderOSMWorld(scene: Scene, map: WorldMap): RenderedWorld {
   const solids: Mesh[] = [];
-  const grass = makeMaterial(scene, 'osm-grass', '#58735b');
-  const road = makeMaterial(scene, 'osm-roads', '#343a40');
-  const path = makeMaterial(scene, 'osm-paths', '#998f7b');
-  const walls = [
-    makeMaterial(scene, 'osm-walls-a', '#9a968a'),
-    makeMaterial(scene, 'osm-walls-b', '#c1a68e'),
-    makeMaterial(scene, 'osm-walls-c', '#93867b'),
-    makeMaterial(scene, 'osm-walls-d', '#b1ada4')
-  ];
+  const grass = makeMaterial(scene, 'osm-grass', WORLD_COLORS.grass, 0.12);
+  const asphalt = makeMaterial(scene, 'osm-roads', WORLD_COLORS.roads, 0.35);
+  const path = makeMaterial(scene, 'osm-paths', WORLD_COLORS.paths, 0.24);
+  const walls = WORLD_COLORS.walls.map((hex, index) =>
+    makeMaterial(scene, 'osm-walls-' + index, hex, 0.22)
+  );
+
   const ground = MeshBuilder.CreateGround('osm-flat-ground', {
     width: map.halfSizeMeters * 2 + 30,
     height: map.halfSizeMeters * 2 + 30
@@ -108,32 +91,36 @@ export function renderOSMWorld(scene: Scene, map: WorldMap): RenderedWorld {
   solids.push(ground);
 
   const pedestrian = new Set(['footway', 'path', 'pedestrian', 'cycleway', 'track']);
-  makeRoadSurface(scene, 'osm-roads', map.roads.filter(x => !pedestrian.has(x.highway)), road);
-  makeRoadSurface(scene, 'osm-footpaths', map.roads.filter(x => pedestrian.has(x.highway)), path);
+  makeRoadSurface(scene, 'osm-roads',
+    map.roads.filter(road => !pedestrian.has(road.highway)), asphalt);
+  makeRoadSurface(scene, 'osm-footpaths',
+    map.roads.filter(road => pedestrian.has(road.highway)), path);
 
   for (const footprint of map.buildings) {
     const mesh = makeBuilding(scene, footprint, walls[Math.abs(footprint.id) % walls.length]);
     if (mesh) solids.push(mesh);
   }
 
-  // Pick a road near the geographic anchor rather than guessing an OSM spawn position.
+  // A road nearest the geographic anchor is the starting position.
+  // The game's independent footprint checks choose a safe spawn if necessary.
   let best = map.roads[0];
   let nearest = Number.POSITIVE_INFINITY;
   for (const segment of map.roads) {
     if (pedestrian.has(segment.highway)) continue;
-    const midX = (segment.a.x + segment.b.x) / 2;
-    const midZ = (segment.a.z + segment.b.z) / 2;
-    const distance = midX * midX + midZ * midZ;
-    if (distance < nearest) {
-      nearest = distance;
+    const x = (segment.a.x + segment.b.x) / 2;
+    const z = (segment.a.z + segment.b.z) / 2;
+    const dist = x * x + z * z;
+    if (dist < nearest) {
+      nearest = dist;
       best = segment;
     }
   }
+
   return {
     solids,
     spawn: {
       x: (best.a.x + best.b.x) / 2,
       z: (best.a.z + best.b.z) / 2,
-    }
+    },
   };
 }

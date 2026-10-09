@@ -1,5 +1,5 @@
 import { Mesh, MeshBuilder, Scene, StandardMaterial } from '@babylonjs/core';
-import { makeBuilding, makeMaterial, makeRoadSurface } from './renderOSM';
+import { makeBuilding, makeMaterial, makeRoadSurface, WORLD_COLORS } from './renderOSM';
 import type { ChunkFile, ChunkManifest } from './chunkGrid';
 
 export interface ChunkGeometry { meshes: Mesh[]; solids: Mesh[]; }
@@ -21,11 +21,11 @@ export class ChunkRenderer {
   constructor(scene: Scene, manifest: ChunkManifest) {
     this.scene = scene;
     this.manifest = manifest;
-    this.groundMat = makeMaterial(scene, 'tile-grass', '#58735b');
-    this.roadMat = makeMaterial(scene, 'tile-roads', '#343a40');
-    this.pathMat = makeMaterial(scene, 'tile-paths', '#998f7b');
-    this.wallMats = ['#9a968a', '#c1a68e', '#93867b', '#b1ada4'].map(
-      (color, i) => makeMaterial(scene, 'tile-wall-' + i, color)
+    this.groundMat = makeMaterial(scene, 'tile-grass', WORLD_COLORS.grass, 0.12);
+    this.roadMat = makeMaterial(scene, 'tile-roads', WORLD_COLORS.roads, 0.35);
+    this.pathMat = makeMaterial(scene, 'tile-paths', WORLD_COLORS.paths, 0.24);
+    this.wallMats = WORLD_COLORS.walls.map(
+      (color, i) => makeMaterial(scene, 'tile-wall-' + i, color, 0.22)
     );
     this.materials = [this.groundMat, this.roadMat, this.pathMat, ...this.wallMats];
   }

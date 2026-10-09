@@ -58,7 +58,13 @@ export class EuropaGame {
     this.callbacks = callbacks;
     this.engine = new Engine(canvas, true, { stencil: true, preserveDrawingBuffer: false });
     this.scene = new Scene(this.engine);
-    this.scene.clearColor = new Color4(0.64, 0.78, 0.87, 1);
+    this.scene.clearColor = new Color4(0.68, 0.79, 0.84, 1);
+    // Gentle daylight, ambient fill and distant atmospheric haze.
+    // We intentionally avoid dynamic shadows until 002D performance profiling.
+    this.scene.ambientColor = new Color3(0.34, 0.35, 0.36);
+    this.scene.fogMode = Scene.FOGMODE_EXP2;
+    this.scene.fogDensity = 0.0005;
+    this.scene.fogColor = new Color3(0.68, 0.79, 0.84);
     this.scene.collisionsEnabled = true;
     this.scene.gravity = new Vector3(0, GRAVITY, 0);
     this.camera = new FreeCamera('player', new Vector3(0, EYE_HEIGHT + 0.03, -7), this.scene);
@@ -157,9 +163,12 @@ export class EuropaGame {
     });
 
     const hemi = new HemisphericLight('sky-light', new Vector3(0, 1, 0), this.scene);
-    hemi.intensity = 0.8;
+    hemi.intensity = 1.0;
+    hemi.diffuse = new Color3(0.95, 0.97, 1.0);
+    hemi.groundColor = new Color3(0.48, 0.49, 0.47);
     const sun = new DirectionalLight('sun', new Vector3(-0.6, -1, 0.4), this.scene);
-    sun.intensity = 0.65;
+    sun.intensity = 0.76;
+    sun.diffuse = new Color3(1.0, 0.95, 0.85);
   }
 
 

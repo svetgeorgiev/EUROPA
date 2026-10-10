@@ -35,9 +35,11 @@ export class DamageableTargets {
   }
 
   spawnNear(position: Point2, isBlocked: (position: Point2) => boolean): void {
+    // Prefer the open ground on the far side of the car, away from the
+    // mapped school wall. Check OSM building-footprint safety before creating.
     const offsets = [
-      { x: -4, z: 9 }, { x: -2, z: 9.5 }, { x: 3, z: 8 },
-      { x: 5, z: 10 }, { x: 8, z: 9 }, { x: -7, z: 10 }
+      { x: -4, z: -7 }, { x: 0, z: -9 }, { x: 4, z: -7 },
+      { x: -7, z: -10 }, { x: 7, z: -10 }, { x: 1, z: -13 }
     ];
     let spawned = 0;
     for (const offset of offsets) {

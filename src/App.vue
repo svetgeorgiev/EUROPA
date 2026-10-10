@@ -12,6 +12,8 @@ import { worldToGeo } from './geo/coordinates';
 import { NOVA_ZAGORA_ANCHOR } from './geo/worldConfig';
 const canvas = ref<HTMLCanvasElement | null>(null);
 const locked = ref(false);
+const vehicleStatus = ref('');
+const interactionHint = ref('');
 const error = ref('');
 const worldMode = ref<'test' | 'osm' | 'stream'>('test');
 const stream = ref<ChunkStreamStats>({ current: '—', loaded: 0, desired: 0, loading: 0, failed: 0, available: 0, failedIds: [], lastError: '' });
@@ -84,7 +86,9 @@ onMounted(() => {
     onLockChange: value => { locked.value = value; },
     onError: message => { error.value = message; },
     onWorldChange: mode => { worldMode.value = mode; },
-    onStreamStats: status => { stream.value = status; }
+    onStreamStats: status => { stream.value = status; },
+    onVehicleStatus: message => { vehicleStatus.value = message; },
+    onInteractionHint: hint => { interactionHint.value = hint; }
   });
 });
 onBeforeUnmount(() => {
@@ -110,13 +114,15 @@ function start(): void { game?.requestPointerLock(); }
     <a v-if="worldMode !== 'test'" class="osm-location" :href="osmUrl" target="_blank" rel="noopener noreferrer">VIEW LOCATION ON OPENSTREETMAP ↗</a>
     <div v-if="error" style="position:absolute;top:90px;left:24px;right:24px;padding:16px;background:#5b1414;color:white;z-index:30;overflow-wrap:anywhere">Game engine error: {{ error }} — press F12 for details.</div>
     <div v-if="locked" class="crosshair" aria-hidden="true">+</div>
+    <div v-if="locked && interactionHint" class="vehicle-interaction">{{ interactionHint }}</div>
+    <div v-if="vehicleStatus" class="vehicle-status">{{ vehicleStatus }}</div>
     <section v-if="!locked" class="start-overlay" @click="start">
       <div class="start-card">
         <div class="eyebrow">PROTOTYPE BUILD 0.1</div>
         <h1>THE WORLD<br />AFTER THE FALL.</h1>
         <p>{{ worldMode === 'stream' ? 'Explore OSM Nova Zagora. World tiles load and unload as you move. Elevation and building interiors are not implemented.' : worldMode === 'osm' ? 'Explore the static OSM prototype. Run pnpm map:chunks to enable streaming.' : 'This is the synthetic environment. Run pnpm map:fetch --osm-api to import real Nova Zagora streets.' }}</p>
         <button type="button" @click.stop="start">CLICK TO ENTER <span>→</span></button>
-        <div class="controls">WASD — Move <span>·</span> Mouse — Look <span>·</span> Shift — Sprint <span>·</span> Space — Jump <span>·</span> R — Unstick <span>·</span> T — Retry chunks <span>·</span> M — Map <span>·</span> Esc — Pause</div>
+        <div class="controls">WASD — Move <span>·</span> Mouse — Look <span>·</span> Shift — Sprint <span>·</span> Space — Jump <span>·</span> R — Unstick <span>·</span> T — Retry chunks <span>·</span> M — Map <span>·</span> E — Search vehicle <span>·</span> Esc — Pause</div>
       </div>
     </section>
     <footer class="footer"><template v-if="worldMode !== 'test'">NOVA ZAGORA · MAP DATA <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">© OpenStreetMap contributors · ODbL 1.0</a></template><template v-else>NOVA ZAGORA · TEST WORLD · RUN pnpm map:fetch</template></footer>

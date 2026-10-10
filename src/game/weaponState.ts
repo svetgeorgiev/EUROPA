@@ -12,18 +12,18 @@ export const EMPTY_WEAPON: Readonly<WeaponAmmo> = Object.freeze({
   owned: false, loaded: 0, reserve: 0
 });
 
-export function validWeaponAmmo(value: unknown): value is WeaponAmmo {
+export function validWeaponAmmo(value: unknown, magazineSize = MAGAZINE_SIZE): value is WeaponAmmo {
   if (!value || typeof value !== 'object') return false;
   const ammo = value as Partial<WeaponAmmo>;
   return typeof ammo.owned === 'boolean' &&
     Number.isInteger(ammo.loaded) && Number.isInteger(ammo.reserve) &&
-    ammo.loaded! >= 0 && ammo.loaded! <= MAGAZINE_SIZE &&
+    ammo.loaded! >= 0 && ammo.loaded! <= magazineSize &&
     ammo.reserve! >= 0 && ammo.reserve! <= 500;
 }
 
-export function pickUpWeapon(state: WeaponAmmo): WeaponAmmo {
+export function pickUpWeapon(state: WeaponAmmo, magazineSize = MAGAZINE_SIZE, reserve = FOUND_RESERVE_ROUNDS): WeaponAmmo {
   return state.owned ? { ...state } : {
-    owned: true, loaded: MAGAZINE_SIZE, reserve: FOUND_RESERVE_ROUNDS
+    owned: true, loaded: magazineSize, reserve
   };
 }
 
@@ -32,11 +32,11 @@ export function fireWeapon(state: WeaponAmmo): { next: WeaponAmmo; fired: boolea
   return { next: { ...state, loaded: state.loaded - 1 }, fired: true };
 }
 
-export function reloadWeapon(state: WeaponAmmo): { next: WeaponAmmo; added: number } {
-  if (!state.owned || state.loaded >= MAGAZINE_SIZE || state.reserve <= 0) {
+export function reloadWeapon(state: WeaponAmmo, magazineSize = MAGAZINE_SIZE): { next: WeaponAmmo; added: number } {
+  if (!state.owned || state.loaded >= magazineSize || state.reserve <= 0) {
     return { next: { ...state }, added: 0 };
   }
-  const added = Math.min(MAGAZINE_SIZE - state.loaded, state.reserve);
+  const added = Math.min(magazineSize - state.loaded, state.reserve);
   return { next: { ...state, loaded: state.loaded + added, reserve: state.reserve - added }, added };
 }
 /**

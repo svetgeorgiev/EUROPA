@@ -1,6 +1,6 @@
 import {
   AbstractMesh, AnimationGroup, Color3, Mesh, MeshBuilder, Scene, SceneLoader,
-  StandardMaterial, TransformNode, Vector3
+  StandardMaterial, TransformNode, Vector3, Quaternion
 } from '@babylonjs/core';
 import '@babylonjs/loaders/glTF';
 
@@ -16,6 +16,25 @@ interface AvatarMotion {
   visible: boolean;
 }
 type AvatarClip = 'idle' | 'walk' | 'run' | 'jump' | 'armed';
+
+type RigJointName = 'leftThigh' | 'rightThigh' | 'leftShin' | 'rightShin' |
+  'leftUpperArm' | 'rightUpperArm' | 'leftForearm' | 'rightForearm' |
+  'leftShoulder' | 'rightShoulder' | 'spine';
+interface RigJoint { node: TransformNode; rest: Quaternion; }
+
+const SKIN_715_BONES: Record<RigJointName, RegExp> = {
+  leftThigh: /^thigh_L\.L_\d+$/i,
+  rightThigh: /^thigh_L\.R_\d+$/i,
+  leftShin: /^shin_L\.L_\d+$/i,
+  rightShin: /^shin_L\.R_\d+$/i,
+  leftUpperArm: /^arm_L_upper\.L_\d+$/i,
+  rightUpperArm: /^arm_L_upper\.R_\d+$/i,
+  leftForearm: /^arm_L_lower\.L_\d+$/i,
+  rightForearm: /^arm_L_lower\.R_\d+$/i,
+  leftShoulder: /^shoulder_L\.L_\d+$/i,
+  rightShoulder: /^shoulder_L\.R_\d+$/i,
+  spine: /^spine_003_\d+$/i
+};
 
 /**
  * Browser-friendly visual avatar. Physics lives in EuropaGame's collider.
@@ -43,6 +62,8 @@ export class CharacterAvatar {
   private clipMap = new Map<AvatarClip, AnimationGroup>();
   private activeClip: AnimationGroup | null = null;
   private usableRig = false;
+  private proceduralRig = false;
+  private readonly rigJoints = new Map<RigJointName, RigJoint>();
   private staticPreview = false;
   private disposed = false;
   private wasVisible = false;
@@ -191,17 +212,41 @@ export class CharacterAvatar {
 
       this.usableRig = imported.skeletons.length > 0 &&
         (this.clipMap.has('walk') || this.clipMap.has('run'));
+      // Uploaded Partizan 715 has a 90-joint skinned skeleton but no clips.
+      // Locate its actual transform-linked bones for runtime procedural posing.
+      const linked = imported.skeletons.flatMap(skeleton =>
+        skeleton.bones.map(bone => bone.getTransformNode()).filter(
+          (node): node is TransformNode => node !== null
+        )
+      );
+      const nodes = [...linked, ...imported.transformNodes];
+      for (const key of Object.keys(SKIN_715_BONES) as RigJointName[]) {
+        const node = nodes.find(candidate => SKIN_715_BONES[key].test(candidate.name));
+        if (!node) continue;
+        const rest = node.rotationQuaternion?.clone() ??
+          Quaternion.RotationYawPitchRoll(node.rotation.y, node.rotation.x, node.rotation.z);
+        node.rotationQuaternion = rest.clone();
+        this.rigJoints.set(key, { node, rest });
+      }
+      this.proceduralRig = imported.skeletons.length > 0 &&
+        ['leftThigh', 'rightThigh', 'leftShin', 'rightShin',
+          'leftUpperArm', 'rightUpperArm', 'leftForearm', 'rightForearm']
+          .every(name => this.rigJoints.has(name as RigJointName));
       console.info('EUROPA character rig diagnostics', {
         skeletons: imported.skeletons.map(s => s.name),
         animations: imported.animationGroups.map(g => g.name),
-        usableLocomotion: this.usableRig
+        usableLocomotion: this.usableRig,
+        proceduralRig: this.proceduralRig,
+        mappedJoints: [...this.rigJoints.keys()]
       });
 
       this.syncPresentation();
       if (this.usableRig) {
-        this.notify('Animated GLB ready: skeleton and walk/run clips detected');
+        this.notify('Character animations found; actual survivor active');
+      } else if (this.proceduralRig) {
+        this.notify('Partizan 715: 90-joint skin rig mapped · procedural walking enabled · P shows bind pose');
       } else {
-        this.notify('skin_1.glb loaded without playable walk/run rig. Animated mannequin active · P previews original skin');
+        this.notify('Skeleton could not be mapped for posing; animated mannequin active · P previews skin');
       }
     } catch (error) {
       root.dispose(false, true);
@@ -213,20 +258,22 @@ export class CharacterAvatar {
   }
 
   private syncPresentation(): void {
-    const useGLB = !!this.gltfRoot && (this.usableRig || this.staticPreview);
+    const useGLB = !!this.gltfRoot && (this.usableRig || this.proceduralRig || this.staticPreview);
     this.mannequin.setEnabled(!useGLB);
     this.gltfRoot?.setEnabled(useGLB);
   }
 
   toggleSkinPreview(): string {
     if (!this.gltfRoot) return 'Skin preview unavailable until skin_1.glb loads';
-    if (this.usableRig) return 'Animated character is already active';
+    if (this.usableRig) return 'Character has authored animation clips; original skin already active';
     this.staticPreview = !this.staticPreview;
     this.activeClip?.pause();
     this.syncPresentation();
     return this.staticPreview
-      ? 'Original static skin (T-pose) · P returns to walking mannequin'
-      : 'Walking mannequin restored · rig the original skin to animate it';
+      ? 'Skin bind pose preview · P returns to the animated survivor'
+      : this.proceduralRig
+        ? 'Procedural skeletal walking restored on actual skin'
+        : 'Walking placeholder restored; inspect mesh skeleton to retarget';
   }
 
   private chooseClip(motion: AvatarMotion): AnimationGroup | null {
@@ -254,6 +301,9 @@ export class CharacterAvatar {
     this.clock += Math.max(0, Math.min(0.05, dt));
     this.syncPresentation();
 
+    if (this.proceduralRig && !this.usableRig) {
+      this.applyProceduralSkinPose(motion);
+    }
     if (this.usableRig) {
       const next = this.chooseClip(motion);
       if (next !== this.activeClip) {
@@ -290,6 +340,47 @@ export class CharacterAvatar {
     }
     this.weaponProxy.setEnabled(motion.holdingGun);
     this.mannequin.position.y = Math.abs(gait) * amount * 0.022;
+  }
+
+  private rotateJoint(name: RigJointName, axis: Vector3, radians: number): void {
+    const joint = this.rigJoints.get(name);
+    if (!joint) return;
+    // Apply delta relative to imported rest orientation (never accumulate drift).
+    joint.node.rotationQuaternion = joint.rest.multiply(
+      Quaternion.RotationAxis(axis, radians)
+    );
+  }
+
+  private restoreRigPose(): void {
+    for (const joint of this.rigJoints.values()) {
+      joint.node.rotationQuaternion = joint.rest.clone();
+    }
+  }
+
+  private applyProceduralSkinPose(motion: AvatarMotion): void {
+    if (this.staticPreview) {
+      this.restoreRigPose();
+      return;
+    }
+    const gaitAmount = Math.min(1, motion.speed / 4.5);
+    const phase = this.clock * (motion.sprinting ? 12 : 8.5);
+    const swing = Math.sin(phase) * gaitAmount;
+    const idle = Math.sin(this.clock * 2.2);
+    const air = !motion.grounded;
+    this.rotateJoint('leftThigh', Vector3.Right(), (air ? -0.22 : swing * 0.53));
+    this.rotateJoint('rightThigh', Vector3.Right(), (air ? 0.24 : -swing * 0.53));
+    this.rotateJoint('leftShin', Vector3.Right(), air ? 0.35 : Math.max(0, -swing) * 0.46);
+    this.rotateJoint('rightShin', Vector3.Right(), air ? 0.35 : Math.max(0, swing) * 0.46);
+    // Lower the original arms out of the imported T-pose, and bring them
+    // forward for an approximate rifle hold. Fine hand IK is a future milestone.
+    const holding = motion.holdingGun;
+    this.rotateJoint('leftShoulder', Vector3.Forward(), holding ? 0.36 : 0.30);
+    this.rotateJoint('rightShoulder', Vector3.Forward(), holding ? -0.36 : -0.30);
+    this.rotateJoint('leftUpperArm', Vector3.Right(), holding ? -0.73 : -swing * 0.35);
+    this.rotateJoint('rightUpperArm', Vector3.Right(), holding ? -0.80 : swing * 0.35);
+    this.rotateJoint('leftForearm', Vector3.Right(), holding ? 0.78 : 0.10);
+    this.rotateJoint('rightForearm', Vector3.Right(), holding ? 0.88 : 0.10);
+    this.rotateJoint('spine', Vector3.Forward(), idle * 0.012);
   }
 
   dispose(): void {

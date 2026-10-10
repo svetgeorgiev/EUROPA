@@ -30,6 +30,9 @@ export class FirstPersonGun {
   private cooldown = 0;
   private recoil = 0;
   private viewModelVisible = true;
+  private walkingSpeed = 0;
+  private walkingGrounded = true;
+  private bobTime = 0;
 
   constructor(
     private readonly scene: Scene,
@@ -58,6 +61,11 @@ export class FirstPersonGun {
 
   get hasGun(): boolean { return this.ammo.owned; }
   get snapshot(): WeaponAmmo { return { ...this.ammo }; }
+
+  setLocomotion(speed: number, grounded: boolean): void {
+    this.walkingSpeed = Math.min(8, Math.max(0, speed));
+    this.walkingGrounded = grounded;
+  }
 
   setViewModelVisible(visible: boolean): void {
     this.viewModelVisible = visible;
@@ -226,6 +234,10 @@ export class FirstPersonGun {
     if (this.disposed) return;
     this.cooldown = Math.max(0, this.cooldown - dt);
     this.recoil = Math.max(0, this.recoil - dt * 6.5);
+    const move = this.walkingGrounded ? Math.min(1, this.walkingSpeed / 5) : 0.2;
+    this.bobTime += dt * (this.walkingSpeed > 5 ? 12 : 8);
+    this.pivot.position.x = 0.30 + Math.sin(this.bobTime) * 0.012 * move;
+    this.pivot.position.y = -0.30 + Math.cos(this.bobTime * 2) * 0.009 * move;
     this.pivot.position.z = 0.58 - 0.09 * this.recoil;
     this.pivot.rotation.x = -0.12 * this.recoil;
     for (let index = this.impactMarkers.length - 1; index >= 0; index--) {

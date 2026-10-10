@@ -4,15 +4,6 @@ import {
 } from '@babylonjs/core';
 import '@babylonjs/loaders/glTF';
 
-/**
- * Optional player avatar, visible for third-person inspection.
- *
- * Animation notes: a static GLB is not automatically a rigged character.
- * If the GLB contains relevant animation groups, play them.
- * Otherwise an animated primitive body remains available as a fallback.
- * The hand-held weapon proxy is approximate until skin_1.glb is inspected
- * and its rig / hand attachment is mapped.
- */
 interface AvatarMotion {
   x: number;
   feetY: number;
@@ -26,80 +17,119 @@ interface AvatarMotion {
 }
 type AvatarClip = 'idle' | 'walk' | 'run' | 'jump' | 'armed';
 
+/**
+ * Browser-friendly visual avatar. Physics lives in EuropaGame's collider.
+ *
+ * IMPORTANT: An unrigged, unanimated GLB cannot be made to walk by adding
+ * physics to its root transform. Use the jointed procedural stand-in until
+ * a skeleton AND usable locomotion clips are provided.
+ * P permits inspecting the uploaded static skin in the debug camera.
+ */
 export class CharacterAvatar {
   private readonly root: TransformNode;
-  private readonly fallback: Mesh[] = [];
-  private readonly limbs: { leftLeg: Mesh; rightLeg: Mesh; leftArm: Mesh; rightArm: Mesh };
-  private readonly materials: StandardMaterial[] = [];
-  private readonly gunProxy: Mesh[] = [];
+  private readonly mannequin: TransformNode;
+  private readonly mats: StandardMaterial[] = [];
+  private readonly parts: Mesh[] = [];
+  private readonly leftHip: TransformNode;
+  private readonly rightHip: TransformNode;
+  private readonly leftShoulder: TransformNode;
+  private readonly rightShoulder: TransformNode;
+  private readonly leftElbow: TransformNode;
+  private readonly rightElbow: TransformNode;
+  private readonly weaponProxy: Mesh;
+
   private gltfRoot: TransformNode | null = null;
   private animationGroups: AnimationGroup[] = [];
   private clipMap = new Map<AvatarClip, AnimationGroup>();
   private activeClip: AnimationGroup | null = null;
+  private usableRig = false;
+  private staticPreview = false;
   private disposed = false;
-  private visible = false;
   private wasVisible = false;
-  private time = 0;
-  private animStatus = 'procedural placeholder';
+  private clock = 0;
 
   constructor(private readonly scene: Scene, private readonly notify: (message: string) => void) {
-    this.root = new TransformNode('player-visual-root', scene);
-    const clothing = this.mat('player-jacket', '#445447');
-    const trousers = this.mat('player-trousers', '#333e43');
-    const skin = this.mat('player-skin', '#c1a28a');
-    const weapon = this.mat('player-weapon-proxy', '#232c30');
+    this.root = new TransformNode('avatar-root', scene);
+    this.mannequin = new TransformNode('avatar-jointed-standin', scene);
+    this.mannequin.parent = this.root;
 
-    const box = (name: string, w: number, h: number, d: number,
-      px: number, py: number, pz: number, mat: StandardMaterial): Mesh => {
-      const mesh = MeshBuilder.CreateBox(name, { width: w, height: h, depth: d }, scene);
-      mesh.parent = this.root;
-      mesh.position.set(px, py, pz);
-      mesh.material = mat;
+    const jacket = this.mat('avatar-jacket', '#566654');
+    const trousers = this.mat('avatar-trousers', '#333e43');
+    const skin = this.mat('avatar-skin', '#c1a28a');
+    const boots = this.mat('avatar-boots', '#342e2b');
+    const gun = this.mat('avatar-weapon', '#253038');
+
+    const createBox = (name: string, parent: TransformNode, size: Vector3,
+      position: Vector3, material: StandardMaterial): Mesh => {
+      const mesh = MeshBuilder.CreateBox(name, {
+        width: size.x, height: size.y, depth: size.z
+      }, scene);
+      mesh.parent = parent;
+      mesh.position.copyFrom(position);
+      mesh.material = material;
       mesh.isPickable = false;
       mesh.checkCollisions = false;
-      this.fallback.push(mesh);
+      this.parts.push(mesh);
       return mesh;
     };
-    box('player-placeholder-torso', 0.46, 0.61, 0.24, 0, 1.12, 0, clothing);
-    const head = MeshBuilder.CreateSphere('player-placeholder-head', {
-      diameter: 0.27, segments: 10
-    }, scene);
-    head.parent = this.root;
-    head.position.set(0, 1.61, 0);
+    createBox('avatar-chest', this.mannequin, new Vector3(0.48, 0.57, 0.26),
+      new Vector3(0, 1.15, 0), jacket);
+    createBox('avatar-hips', this.mannequin, new Vector3(0.39, 0.20, 0.25),
+      new Vector3(0, 0.80, 0), trousers);
+    const head = MeshBuilder.CreateSphere('avatar-head', { diameter: 0.25, segments: 12 }, scene);
+    head.parent = this.mannequin;
+    head.position.set(0, 1.62, 0.025);
     head.material = skin;
     head.isPickable = false;
     head.checkCollisions = false;
-    this.fallback.push(head);
-    const leftLeg = box('player-placeholder-left-leg', 0.18, 0.74, 0.19, -0.13, 0.42, 0, trousers);
-    const rightLeg = box('player-placeholder-right-leg', 0.18, 0.74, 0.19, 0.13, 0.42, 0, trousers);
-    const leftArm = box('player-placeholder-left-arm', 0.16, 0.60, 0.17, -0.34, 1.16, 0.03, clothing);
-    const rightArm = box('player-placeholder-right-arm', 0.16, 0.60, 0.17, 0.34, 1.16, 0.03, clothing);
-    this.limbs = { leftLeg, rightLeg, leftArm, rightArm };
+    this.parts.push(head);
 
-    // This intentionally uses a lightweight proxy rather than loading a
-    // second 3D weapon model when switching to third-person.
-    const body = MeshBuilder.CreateBox('avatar-held-gun-proxy', {
-      width: 0.12, height: 0.13, depth: 0.44
-    }, scene);
-    body.parent = this.root;
-    body.position.set(0.26, 1.17, 0.32);
-    body.material = weapon;
-    body.isPickable = false;
-    body.checkCollisions = false;
-    this.gunProxy.push(body);
+    const joint = (name: string, parent: TransformNode, x: number, y: number, z: number) => {
+      const node = new TransformNode(name, scene);
+      node.parent = parent;
+      node.position.set(x, y, z);
+      return node;
+    };
+    this.leftHip = joint('avatar-left-hip', this.mannequin, -0.14, 0.77, 0);
+    this.rightHip = joint('avatar-right-hip', this.mannequin, 0.14, 0.77, 0);
+    for (const [name, hip] of [['left', this.leftHip], ['right', this.rightHip]] as const) {
+      createBox('avatar-' + name + '-leg', hip, new Vector3(0.18, 0.69, 0.19),
+        new Vector3(0, -0.35, 0), trousers);
+      createBox('avatar-' + name + '-boot', hip, new Vector3(0.20, 0.15, 0.27),
+        new Vector3(0, -0.70, 0.055), boots);
+    }
+    this.leftShoulder = joint('avatar-left-shoulder', this.mannequin, -0.34, 1.39, 0);
+    this.rightShoulder = joint('avatar-right-shoulder', this.mannequin, 0.34, 1.39, 0);
+    this.leftElbow = joint('avatar-left-elbow', this.leftShoulder, 0, -0.27, 0);
+    this.rightElbow = joint('avatar-right-elbow', this.rightShoulder, 0, -0.27, 0);
+    for (const [name, shoulder, elbow] of [
+      ['left', this.leftShoulder, this.leftElbow],
+      ['right', this.rightShoulder, this.rightElbow]
+    ] as const) {
+      createBox('avatar-' + name + '-upper-arm', shoulder,
+        new Vector3(0.16, 0.31, 0.17), new Vector3(0, -0.15, 0), jacket);
+      createBox('avatar-' + name + '-forearm', elbow,
+        new Vector3(0.14, 0.26, 0.15), new Vector3(0, -0.14, 0), jacket);
+      createBox('avatar-' + name + '-hand', elbow,
+        new Vector3(0.13, 0.12, 0.12), new Vector3(0, -0.29, 0), skin);
+    }
+    this.weaponProxy = createBox('avatar-held-weapon-standin', this.mannequin,
+      new Vector3(0.12, 0.12, 0.48), new Vector3(0.21, 1.11, 0.49), gun);
+    this.weaponProxy.setEnabled(false);
+
     this.root.setEnabled(false);
     void this.loadSkin();
   }
 
-  private mat(name: string, hex: string): StandardMaterial {
-    const result = new StandardMaterial(name, this.scene);
-    result.diffuseColor = Color3.FromHexString(hex);
-    result.specularColor = Color3.Black();
-    this.materials.push(result);
-    return result;
+  private mat(name: string, color: string): StandardMaterial {
+    const mat = new StandardMaterial(name, this.scene);
+    mat.diffuseColor = Color3.FromHexString(color);
+    mat.specularColor = Color3.Black();
+    this.mats.push(mat);
+    return mat;
   }
 
-  private chooseClip(name: AvatarClip): AnimationGroup | null {
+  private findClip(clip: AvatarClip): AnimationGroup | undefined {
     const patterns: Record<AvatarClip, RegExp> = {
       idle: /idle|breath|stand/i,
       walk: /walk|locomotion|stride/i,
@@ -107,91 +137,111 @@ export class CharacterAvatar {
       jump: /jump|fall|airborne/i,
       armed: /aim|rifle|weapon|hold|gun/i
     };
-    return this.animationGroups.find(g => patterns[name].test(g.name)) ?? null;
+    return this.animationGroups.find(group => patterns[clip].test(group.name));
   }
 
   private async loadSkin(): Promise<void> {
-    const importRoot = new TransformNode('player-skin-glb-root', this.scene);
+    const root = new TransformNode('avatar-sketchfab-glb', this.scene);
     try {
-      const result = await SceneLoader.ImportMeshAsync(
-        '', '/assets/skins/', 'skin_1.glb', this.scene
-      );
+      const imported = await SceneLoader.ImportMeshAsync('', '/assets/skins/', 'skin_1.glb', this.scene);
       if (this.disposed) {
-        result.meshes.forEach(mesh => mesh.dispose(false, true));
-        importRoot.dispose();
+        imported.meshes.forEach(mesh => mesh.dispose(false, true));
+        root.dispose();
         return;
       }
-      const nodes: TransformNode[] = [...result.transformNodes, ...result.meshes];
-      const imported = new Set(nodes);
-      nodes.filter(node => !node.parent || !imported.has(node.parent as TransformNode))
-        .forEach(node => { node.parent = importRoot; });
-      importRoot.computeWorldMatrix(true);
-      const renderables = result.meshes.filter(
+
+      const allNodes: TransformNode[] = [...imported.transformNodes, ...imported.meshes];
+      const known = new Set(allNodes);
+      allNodes.filter(node => !node.parent || !known.has(node.parent as TransformNode))
+        .forEach(node => { node.parent = root; });
+
+      const renderables = imported.meshes.filter(
         (mesh): mesh is AbstractMesh => mesh instanceof AbstractMesh && mesh.getTotalVertices() > 0
       );
-      if (!renderables.length) throw new Error('skin_1.glb has no renderable meshes');
+      if (!renderables.length) throw new Error('skin_1.glb contains no meshes');
+      root.computeWorldMatrix(true);
       const min = new Vector3(Infinity, Infinity, Infinity);
       const max = new Vector3(-Infinity, -Infinity, -Infinity);
       for (const mesh of renderables) {
         mesh.computeWorldMatrix(true);
-        const box = mesh.getBoundingInfo().boundingBox;
-        min.minimizeInPlace(box.minimumWorld);
-        max.maximizeInPlace(box.maximumWorld);
+        const bounds = mesh.getBoundingInfo().boundingBox;
+        min.minimizeInPlace(bounds.minimumWorld);
+        max.maximizeInPlace(bounds.maximumWorld);
         mesh.isPickable = false;
         mesh.checkCollisions = false;
       }
       const height = max.y - min.y;
-      if (!Number.isFinite(height) || height <= 0.001) throw new Error('Character has invalid height');
+      if (!Number.isFinite(height) || height < 0.001) throw new Error('Character height is invalid');
       const scale = 1.75 / height;
-      importRoot.scaling.setAll(scale);
-      importRoot.position.set(
-        -(min.x + max.x) * 0.5 * scale,
+      root.scaling.setAll(scale);
+      root.position.set(
+        -(min.x + max.x) * scale / 2,
         -min.y * scale,
-        -(min.z + max.z) * 0.5 * scale
+        -(min.z + max.z) * scale / 2
       );
-      importRoot.parent = this.root;
-      this.gltfRoot = importRoot;
-      this.animationGroups = result.animationGroups;
-      console.info('EUROPA: character rig inspection', {
-        skeletons: result.skeletons.length,
-        animationClips: result.animationGroups.map(group => group.name),
-        renderMeshes: renderables.length
-      });
+      root.parent = this.root;
+
+      this.gltfRoot = root;
+      this.animationGroups = imported.animationGroups;
       for (const group of this.animationGroups) group.stop();
       for (const clip of ['idle', 'walk', 'run', 'jump', 'armed'] as const) {
-        const group = this.chooseClip(clip);
+        const group = this.findClip(clip);
         if (group) this.clipMap.set(clip, group);
       }
-      this.animStatus = this.animationGroups.length > 0
-        ? 'GLB with ' + this.animationGroups.length + ' animation clips'
-        : 'GLB without animation clips (static skin)';
-      this.fallback.forEach(mesh => mesh.setEnabled(false));
-      this.notify('Character loaded: ' + this.animStatus + ' · C toggles camera');
-      this.root.setEnabled(this.visible);
+
+      this.usableRig = imported.skeletons.length > 0 &&
+        (this.clipMap.has('walk') || this.clipMap.has('run'));
+      console.info('EUROPA character rig diagnostics', {
+        skeletons: imported.skeletons.map(s => s.name),
+        animations: imported.animationGroups.map(g => g.name),
+        usableLocomotion: this.usableRig
+      });
+
+      this.syncPresentation();
+      if (this.usableRig) {
+        this.notify('Animated GLB ready: skeleton and walk/run clips detected');
+      } else {
+        this.notify('skin_1.glb loaded without playable walk/run rig. Animated mannequin active · P previews original skin');
+      }
     } catch (error) {
-      importRoot.dispose(false, true);
+      root.dispose(false, true);
       if (!this.disposed) {
-        this.notify('Character GLB not usable. Procedural avatar active; check /assets/skins/skin_1.glb');
-        console.warn('EUROPA: skin_1.glb import failed', error);
+        console.warn('EUROPA character GLB not usable:', error);
+        this.notify('skin_1.glb could not load · animated mannequin remains active');
       }
     }
   }
 
-  private chooseActiveClip(m: AvatarMotion): AnimationGroup | null {
-    if (!m.grounded) return this.clipMap.get('jump') ?? this.clipMap.get('idle') ?? null;
-    if (m.speed > 0.5) {
-      const desired = m.sprinting ? 'run' : 'walk';
-      return this.clipMap.get(desired) ?? this.clipMap.get('walk') ?? this.clipMap.get('idle') ?? null;
+  private syncPresentation(): void {
+    const useGLB = !!this.gltfRoot && (this.usableRig || this.staticPreview);
+    this.mannequin.setEnabled(!useGLB);
+    this.gltfRoot?.setEnabled(useGLB);
+  }
+
+  toggleSkinPreview(): string {
+    if (!this.gltfRoot) return 'Skin preview unavailable until skin_1.glb loads';
+    if (this.usableRig) return 'Animated character is already active';
+    this.staticPreview = !this.staticPreview;
+    this.activeClip?.pause();
+    this.syncPresentation();
+    return this.staticPreview
+      ? 'Original static skin (T-pose) · P returns to walking mannequin'
+      : 'Walking mannequin restored · rig the original skin to animate it';
+  }
+
+  private chooseClip(motion: AvatarMotion): AnimationGroup | null {
+    if (!motion.grounded) return this.clipMap.get('jump') ?? this.clipMap.get('idle') ?? null;
+    if (motion.speed > 0.5) {
+      if (motion.sprinting) return this.clipMap.get('run') ?? this.clipMap.get('walk') ?? null;
+      return this.clipMap.get('walk') ?? this.clipMap.get('run') ?? null;
     }
-    return (m.holdingGun ? this.clipMap.get('armed') : null) ??
+    return (motion.holdingGun ? this.clipMap.get('armed') : null) ??
       this.clipMap.get('idle') ?? null;
   }
 
   update(dt: number, motion: AvatarMotion): void {
     if (this.disposed) return;
-    this.visible = motion.visible;
     this.root.setEnabled(motion.visible);
-    // Do not update bone/mesh animation unnecessarily when not rendering avatar.
     if (!motion.visible) {
       if (this.wasVisible) this.activeClip?.pause();
       this.wasVisible = false;
@@ -201,28 +251,45 @@ export class CharacterAvatar {
     this.wasVisible = true;
     this.root.position.set(motion.x, motion.feetY, motion.z);
     this.root.rotation.y = motion.yaw;
-    this.time += dt;
+    this.clock += Math.max(0, Math.min(0.05, dt));
+    this.syncPresentation();
 
-    if (this.gltfRoot) {
-      const next = this.chooseActiveClip(motion);
+    if (this.usableRig) {
+      const next = this.chooseClip(motion);
       if (next !== this.activeClip) {
         this.activeClip?.stop();
         this.activeClip = next;
-        if (next) next.start(true, motion.sprinting ? 1.25 : 1);
+        if (next) next.start(true, motion.sprinting ? 1.3 : 1);
       } else if (resumed) {
         this.activeClip?.play(true);
       }
     }
-    const motionAmount = Math.min(1, motion.speed / 5);
-    const cycle = Math.sin(this.time * (motion.sprinting ? 13 : 8));
-    const swing = cycle * motionAmount * 0.48;
-    this.root.position.y += Math.abs(cycle) * motionAmount * 0.025;
-    // Fallback articulated limbs, independent of the imported model.
-    this.limbs.leftLeg.rotation.x = swing;
-    this.limbs.rightLeg.rotation.x = -swing;
-    this.limbs.leftArm.rotation.x = motion.holdingGun ? -0.9 : -swing * 0.7;
-    this.limbs.rightArm.rotation.x = motion.holdingGun ? -0.9 : swing * 0.7;
-    for (const mesh of this.gunProxy) mesh.setEnabled(motion.holdingGun);
+
+    // Animated joint transforms, not spinning disconnected limb meshes.
+    // The GLB itself is not deformed when it lacks a skeleton/animations.
+    const amount = Math.min(1, motion.speed / 4.5);
+    const gait = Math.sin(this.clock * (motion.sprinting ? 12 : 8.5));
+    const legs = gait * amount * 0.52;
+    this.leftHip.rotation.x = legs;
+    this.rightHip.rotation.x = -legs;
+    if (motion.holdingGun) {
+      // Reach both hands forward towards the approximated long gun.
+      this.leftShoulder.rotation.x = -1.08 + gait * amount * 0.035;
+      this.rightShoulder.rotation.x = -1.05 - gait * amount * 0.035;
+      this.leftShoulder.rotation.z = -0.18;
+      this.rightShoulder.rotation.z = 0.10;
+      this.leftElbow.rotation.x = -0.35;
+      this.rightElbow.rotation.x = -0.50;
+    } else {
+      this.leftShoulder.rotation.x = -legs * 0.8;
+      this.rightShoulder.rotation.x = legs * 0.8;
+      this.leftShoulder.rotation.z = 0.08;
+      this.rightShoulder.rotation.z = -0.08;
+      this.leftElbow.rotation.x = 0;
+      this.rightElbow.rotation.x = 0;
+    }
+    this.weaponProxy.setEnabled(motion.holdingGun);
+    this.mannequin.position.y = Math.abs(gait) * amount * 0.022;
   }
 
   dispose(): void {
@@ -231,8 +298,7 @@ export class CharacterAvatar {
     for (const group of this.animationGroups) group.dispose();
     this.animationGroups = [];
     this.gltfRoot?.dispose(false, true);
-    this.gltfRoot = null;
     this.root.dispose(false, true);
-    for (const mat of this.materials) mat.dispose();
+    for (const mat of this.mats) mat.dispose();
   }
 }

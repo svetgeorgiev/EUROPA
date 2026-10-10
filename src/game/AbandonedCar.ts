@@ -26,7 +26,8 @@ export class AbandonedCar {
   constructor(
     private readonly scene: Scene,
     private readonly notify: (message: string) => void,
-    private readonly needsGun: () => boolean = () => false
+    private readonly needsGun: () => boolean = () => false,
+    private readonly needsAmmo: () => boolean = () => false
   ) {
     try { this.searched = localStorage.getItem(STATE_KEY) === 'true'; }
     catch { /* Private mode may prohibit storage. */ }
@@ -180,17 +181,22 @@ export class AbandonedCar {
     const forward = new Vector3(Math.sin(yaw), 0, Math.cos(yaw));
     if (Vector3.Dot(forward, delta.normalize()) < 0.15) return '';
     if (this.needsGun()) return this.searched ? 'E — Take gun from car' : 'E — Search car for a gun';
+    if (this.needsAmmo()) return 'E — Restock practice ammo (24 rounds)';
     return this.searched ? 'Vehicle already searched' : 'E — Search abandoned car';
   }
 
   /** A previously searched car still allows the new weapon pickup exactly once. */
-  interact(player: Vector3, yaw: number): 'gun' | 'supplies' | null {
+  interact(player: Vector3, yaw: number): 'gun' | 'supplies' | 'ammo' | null {
     if (!this.interactionLabel(player, yaw)) return null;
     if (this.needsGun()) {
       this.searched = true;
       try { localStorage.setItem(STATE_KEY, 'true'); } catch { /* Session fallback */ }
       this.notify('Found a firearm in the abandoned car');
       return 'gun';
+    }
+    if (this.needsAmmo()) {
+      this.notify('You found 24 practice rounds in the car (prototype restock)');
+      return 'ammo';
     }
     if (this.searched) return null;
     this.searched = true;

@@ -14,6 +14,7 @@ const canvas = ref<HTMLCanvasElement | null>(null);
 const locked = ref(false);
 const vehicleStatus = ref('');
 const interactionHint = ref('');
+const vehicleLocation = ref<{ x: number; z: number } | null>(null);
 const error = ref('');
 const worldMode = ref<'test' | 'osm' | 'stream'>('test');
 const stream = ref<ChunkStreamStats>({ current: '—', loaded: 0, desired: 0, loading: 0, failed: 0, available: 0, failedIds: [], lastError: '' });
@@ -88,6 +89,7 @@ onMounted(() => {
     onWorldChange: mode => { worldMode.value = mode; },
     onStreamStats: status => { stream.value = status; },
     onVehicleStatus: message => { vehicleStatus.value = message; },
+    onVehicleLocation: position => { vehicleLocation.value = position; },
     onInteractionHint: hint => { interactionHint.value = hint; }
   });
 });
@@ -101,7 +103,7 @@ function start(): void { game?.requestPointerLock(); }
 <template>
   <main class="viewport">
     <canvas ref="canvas" class="game-canvas" @click="start" aria-label="EUROPA 3D game viewport" />
-    <header class="hud-top"><div class="brand">EUROPA <span>002D.3B</span></div><div class="sub">{{ worldMode === 'stream' ? 'STREAMED REAL-WORLD GEOMETRY' : worldMode !== 'test' ? 'STATIC OSM WORLD · RUN pnpm map:chunks' : 'TEST ENVIRONMENT · IMPORT PENDING' }}</div></header>
+    <header class="hud-top"><div class="brand">EUROPA <span>002E</span></div><div class="sub">{{ worldMode === 'stream' ? 'STREAMED REAL-WORLD GEOMETRY' : worldMode !== 'test' ? 'STATIC OSM WORLD · RUN pnpm map:chunks' : 'TEST ENVIRONMENT · IMPORT PENDING' }}</div></header>
     <div class="stats" aria-live="off"><strong>{{ stats.fps }}</strong> FPS <span class="separator">·</span> X {{ stats.x.toFixed(1) }} · Y {{ stats.y.toFixed(1) }} · Z {{ stats.z.toFixed(1) }} <span class="separator">·</span> {{ stats.grounded ? 'GROUNDED' : 'AIRBORNE' }}</div>
     <div class="geo-preview" :title="worldMode !== 'test' ? 'Real OSM planimetric geometry; flat elevation is not yet implemented' : 'Simulated projection only — run pnpm map:fetch to import real roads and buildings'">{{ worldMode !== 'test' ? 'OSM GEO PREVIEW · FLAT TERRAIN' : 'GEO PREVIEW (SIMULATED)' }} · {{ previewGeo.latitude.toFixed(6) }}° N · {{ previewGeo.longitude.toFixed(6) }}° E</div>
     <div v-if="worldMode === 'stream'" class="stream-debug" aria-live="off"
@@ -110,7 +112,7 @@ function start(): void { game?.requestPointerLock(); }
       TILE {{ stream.current }} · {{ stream.loaded }}/{{ stream.available }} loaded · {{ stream.loading }} loading · {{ stream.failed }} failed
       <template v-if="stream.failed"> ({{ stream.failedIds.join(', ') }}) · PRESS T TO RETRY</template>
     </div>
-    <LocalMap v-if="worldMode !== 'test' && fullMap" :map="fullMap" :navigation="navigation" :sites="schoolSites" :x="stats.x" :z="stats.z" :yaw="stats.yaw" :overview="overview" />
+    <LocalMap v-if="worldMode !== 'test' && fullMap" :map="fullMap" :navigation="navigation" :sites="schoolSites" :x="stats.x" :z="stats.z" :yaw="stats.yaw" :overview="overview" :vehicle="vehicleLocation" />
     <a v-if="worldMode !== 'test'" class="osm-location" :href="osmUrl" target="_blank" rel="noopener noreferrer">VIEW LOCATION ON OPENSTREETMAP ↗</a>
     <div v-if="error" style="position:absolute;top:90px;left:24px;right:24px;padding:16px;background:#5b1414;color:white;z-index:30;overflow-wrap:anywhere">Game engine error: {{ error }} — press F12 for details.</div>
     <div v-if="locked" class="crosshair" aria-hidden="true">+</div>
@@ -122,7 +124,7 @@ function start(): void { game?.requestPointerLock(); }
         <h1>THE WORLD<br />AFTER THE FALL.</h1>
         <p>{{ worldMode === 'stream' ? 'Explore OSM Nova Zagora. World tiles load and unload as you move. Elevation and building interiors are not implemented.' : worldMode === 'osm' ? 'Explore the static OSM prototype. Run pnpm map:chunks to enable streaming.' : 'This is the synthetic environment. Run pnpm map:fetch --osm-api to import real Nova Zagora streets.' }}</p>
         <button type="button" @click.stop="start">CLICK TO ENTER <span>→</span></button>
-        <div class="controls">WASD — Move <span>·</span> Mouse — Look <span>·</span> Shift — Sprint <span>·</span> Space — Jump <span>·</span> R — Unstick <span>·</span> T — Retry chunks <span>·</span> M — Map <span>·</span> E — Search vehicle <span>·</span> Esc — Pause</div>
+        <div class="controls">WASD — Move <span>·</span> Mouse — Look <span>·</span> Shift — Sprint <span>·</span> Space — Jump <span>·</span> R — Unstick <span>·</span> T — Retry chunks <span>·</span> M — Map <span>·</span> V — Visit car <span>·</span> E — Search vehicle <span>·</span> Esc — Pause</div>
       </div>
     </section>
     <footer class="footer"><template v-if="worldMode !== 'test'">NOVA ZAGORA · MAP DATA <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">© OpenStreetMap contributors · ODbL 1.0</a></template><template v-else>NOVA ZAGORA · TEST WORLD · RUN pnpm map:fetch</template></footer>

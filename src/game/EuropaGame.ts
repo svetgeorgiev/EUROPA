@@ -394,7 +394,9 @@ export class EuropaGame {
       return;
     }
     const vehicle = new AbandonedCar(
-      this.scene, this.callbacks.onVehicleStatus, () => !this.weapon?.hasGun
+      this.scene, this.callbacks.onVehicleStatus,
+      () => !this.weapon?.hasGun,
+      () => !!this.weapon?.hasGun && this.weapon.snapshot.reserve < 8
     );
     this.abandonedCar = vehicle;
     this.callbacks.onVehicleLocation(safe);
@@ -486,6 +488,16 @@ export class EuropaGame {
       this.updateViewCamera();
       return;
     }
+    if (event.code === 'KeyP' && !event.repeat && document.pointerLockElement === this.canvas) {
+      event.preventDefault();
+      this.callbacks.onVehicleStatus(this.avatar?.toggleSkinPreview() ?? 'Character not loaded yet');
+      return;
+    }
+    if (event.code === 'KeyG' && !event.repeat && document.pointerLockElement === this.canvas) {
+      event.preventDefault();
+      this.weapon?.toggleGunDirection();
+      return;
+    }
     if (event.code === 'KeyV' && !event.repeat && document.pointerLockElement === this.canvas) {
       event.preventDefault();
       this.visitVehicle();
@@ -496,6 +508,7 @@ export class EuropaGame {
       const p = this.playerCollider.position;
       const result = this.abandonedCar?.interact(new Vector3(p.x, p.y + 0.75, p.z), this.yaw);
       if (result === 'gun') this.weapon?.pickUp();
+      if (result === 'ammo') this.weapon?.restock(24);
       return;
     }
     if (event.code === 'KeyF' && !event.repeat && document.pointerLockElement === this.canvas) {

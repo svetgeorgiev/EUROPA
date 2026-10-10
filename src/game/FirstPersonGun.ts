@@ -4,7 +4,7 @@ import {
 } from '@babylonjs/core';
 import '@babylonjs/loaders/glTF';
 import {
-  EMPTY_WEAPON, fireWeapon, pickUpWeapon, reloadWeapon, validWeaponAmmo,
+  EMPTY_WEAPON, addReserveAmmunition, fireWeapon, pickUpWeapon, reloadWeapon, validWeaponAmmo,
   type WeaponAmmo
 } from './weaponState';
 
@@ -21,6 +21,11 @@ export class FirstPersonGun {
   private readonly pivot: TransformNode;
   private readonly placeholder: Mesh[] = [];
   private readonly placeholderMaterials: StandardMaterial[] = [];
+  private readonly handMaterials: StandardMaterial[] = [];
+  private readonly hands: Mesh[] = [];
+  private modelAlignment: TransformNode | null = null;
+  private modelYaw = 0;
+  private gunFlipped = false;
   private readonly impactMaterial: StandardMaterial;
   private readonly impactMarkers: Array<{ mesh: Mesh; ttl: number }> = [];
   private modelRoot: TransformNode | null = null;
@@ -50,6 +55,7 @@ export class FirstPersonGun {
     this.pivot.parent = camera;
     this.pivot.position.set(0.30, -0.30, 0.58);
     this.makePlaceholder();
+    this.makeHands();
     this.pivot.setEnabled(this.ammo.owned);
     this.impactMaterial = new StandardMaterial('gun-impact-glow', scene);
     this.impactMaterial.diffuseColor = Color3.FromHexString('#f8b66a');
@@ -103,6 +109,62 @@ export class FirstPersonGun {
     for (const mesh of this.placeholder) this.setupViewMesh(mesh);
   }
 
+  /**
+   * First-person visual arms are attached to the view gun as a prototype.
+   * They are not character bones and do not yet implement true hand IK.
+   */
+  private makeHands(): void {
+    const sleeve = new StandardMaterial('fps-sleeve-olive', this.scene);
+    sleeve.diffuseColor = Color3.FromHexString('#53604f');
+    const hand = new StandardMaterial('fps-hand-skin', this.scene);
+    hand.diffuseColor = Color3.FromHexString('#b89a80');
+    this.handMaterials.push(sleeve, hand);
+    for (const side of [-1, 1]) {
+      const forearm = MeshBuilder.CreateCylinder('fps-arm-' + side, {
+        diameter: 0.17, height: 0.47, tessellation: 10
+      }, this.scene);
+      forearm.parent = this.pivot;
+      forearm.rotation.x = -1.1;
+      forearm.rotation.z = side * 0.25;
+      forearm.position.set(side * 0.20, -0.35, side < 0 ? 0.10 : -0.12);
+      forearm.material = sleeve;
+      const palm = MeshBuilder.CreateSphere('fps-glove-' + side, {
+        diameter: 0.135, segments: 9
+      }, this.scene);
+      palm.parent = this.pivot;
+      palm.position.set(side * 0.15, -0.07, side < 0 ? 0.27 : 0.07);
+      palm.material = hand;
+      this.hands.push(forearm, palm);
+      this.setupViewMesh(forearm);
+      this.setupViewMesh(palm);
+    }
+  }
+
+  /**
+   * Most Sketchfab rifles use an X-facing long axis, whereas Babylon's
+   * view direction is +Z. Re-orient the imported art, never the raycast.
+   * G flips the barrel direction for models with the opposite muzzle axis.
+   */
+  toggleGunDirection(): void {
+    if (!this.ammo.owned || !this.modelAlignment) return;
+    this.gunFlipped = !this.gunFlipped;
+    this.modelAlignment.rotation.y = this.modelYaw + (this.gunFlipped ? Math.PI : 0);
+    this.notify(this.gunFlipped ? 'Weapon facing flipped · G to reverse' : 'Weapon facing restored');
+  }
+
+  restock(rounds = 24): boolean {
+    if (!this.ammo.owned || this.disposed) return false;
+    const { next, added } = addReserveAmmunition(this.ammo, rounds);
+    if (added <= 0) return false;
+    this.ammo = next;
+    // When completely empty, automatically load the first magazine.
+    if (this.ammo.loaded === 0) this.ammo = reloadWeapon(this.ammo).next;
+    this.save();
+    this.notify('Recovered ' + added + ' practice rounds · ' +
+      this.ammo.loaded + ' loaded / ' + this.ammo.reserve + ' spare');
+    return true;
+  }
+
   private setupViewMesh(mesh: AbstractMesh): void {
     mesh.isPickable = false;
     mesh.checkCollisions = false;
@@ -153,8 +215,14 @@ export class FirstPersonGun {
         -0.5 * (min.y + max.y) * scale,
         -0.5 * (min.z + max.z) * scale
       );
-      assetRoot.parent = this.pivot;
-      this.modelRoot = assetRoot;
+      const modelAlignment = new TransformNode('gun-orientation-pivot', this.scene);
+      modelAlignment.parent = this.pivot;
+      assetRoot.parent = modelAlignment;
+      // Auto-correct horizontal rifle models imported sideways from Sketchfab.
+      this.modelYaw = dim.x > dim.z ? Math.PI / 2 : 0;
+      modelAlignment.rotation.y = this.modelYaw + (this.gunFlipped ? Math.PI : 0);
+      this.modelAlignment = modelAlignment;
+      this.modelRoot = modelAlignment;
       this.placeholder.forEach(mesh => mesh.setEnabled(false));
       this.notify('Gun model loaded · left click to shoot · F to reload');
     } catch (error) {
@@ -259,7 +327,9 @@ export class FirstPersonGun {
     this.impactMaterial.dispose();
     this.modelRoot?.dispose(false, true);
     this.modelRoot = null;
+    this.modelAlignment = null;
     this.pivot.dispose(false, true);
     for (const material of this.placeholderMaterials) material.dispose();
+    for (const material of this.handMaterials) material.dispose();
   }
 }

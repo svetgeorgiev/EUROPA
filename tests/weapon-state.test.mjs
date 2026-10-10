@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   EMPTY_WEAPON, FOUND_RESERVE_ROUNDS, MAGAZINE_SIZE, fireWeapon,
-  pickUpWeapon, reloadWeapon, validWeaponAmmo
+  pickUpWeapon, reloadWeapon, validWeaponAmmo, addReserveAmmunition
 } from '../src/game/weaponState.ts';
 
 test('gun is initially absent and cannot fire', () => {
@@ -47,4 +47,22 @@ test('localStorage data is rejected if corrupt or over capacity', () => {
   assert.equal(validWeaponAmmo({ owned: true, loaded: 2.5, reserve: 1 }), false);
   assert.equal(validWeaponAmmo({ owned: true, loaded: 8, reserve: 1000000 }), false);
   assert.equal(validWeaponAmmo(pickUpWeapon({ ...EMPTY_WEAPON })), true);
+});
+
+test('prototype ammo cache restores empty gun without changing magazine directly', () => {
+  const empty = { owned: true, loaded: 0, reserve: 0 };
+  const result = addReserveAmmunition(empty, 24);
+  assert.equal(result.added, 24);
+  assert.deepEqual(result.next, { owned: true, loaded: 0, reserve: 24 });
+  const loaded = reloadWeapon(result.next);
+  assert.equal(loaded.next.loaded, 8);
+  assert.equal(loaded.next.reserve, 16);
+  assert.deepEqual(empty, { owned: true, loaded: 0, reserve: 0 });
+});
+
+test('ammo restock respects cap and refuses non-owners or invalid values', () => {
+  assert.equal(addReserveAmmunition({ ...EMPTY_WEAPON }, 24).added, 0);
+  assert.equal(addReserveAmmunition({ owned: true, loaded: 8, reserve: 90 }, 24).added, 6);
+  assert.equal(addReserveAmmunition({ owned: true, loaded: 8, reserve: 96 }, 24).added, 0);
+  assert.equal(addReserveAmmunition({ owned: true, loaded: 1, reserve: 0 }, -3).added, 0);
 });

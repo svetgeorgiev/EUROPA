@@ -143,3 +143,67 @@ test('school campus way keeps its area centroid when osmium also exports a LineS
     assert.equal(world(data).buildings.length,0,'campus is not a physical building');
   }
 });
+
+
+test('default osmium area+line export does not double-count buildings regardless of order', () => {
+  const sameBuildingAsLine = feature('way',101,{building:'house'},{
+    type:'LineString',coordinates:oldBuilding.geometry.coordinates[0]
+  });
+  for (const features of [
+    [street,sameBuildingAsLine,oldBuilding,schoolNode],
+    [street,oldBuilding,sameBuildingAsLine,schoolNode]
+  ]) {
+    const data=normalize(features);
+    const map=world(data);
+    assert.equal(map.buildings.length,1,'one actual OSM way is one building');
+    assert.deepEqual(map.buildings.map(b=>b.sourceId),['way/101']);
+    assert.equal(data.stats.duplicateLinearBuildingRepresentations,1);
+    assert.equal(data.elements.filter(x=>x.type==='way'&&x.tags?.building).length,1);
+  }
+});
+
+test('duplicated osmium line must not override the polygon school POI position', () => {
+  const polygonSchool=feature('way',102,{
+    building:'school',amenity:'school',name:'СУ Иван Вазов'
+  },addedBuilding.geometry);
+  const lineSchool=feature('way',102,{
+    building:'school',amenity:'school',name:'СУ Иван Вазов'
+  },{type:'LineString',coordinates:addedBuilding.geometry.coordinates[0]});
+  const data=normalize([street,lineSchool,polygonSchool]);
+  const poi=navigation(data).landmarks.find(item=>item.id==='way/102');
+  assert.ok(poi);
+  assert.ok(Math.abs(poi.point.x-22.5)<0.3,'POI is polygon centroid, not a line midpoint');
+  assert.ok(Math.abs(poi.point.z-22.5)<0.3);
+  assert.equal(world(data).buildings.length,1);
+});
+
+test('invalid courtyard building cannot sneak into physical map via duplicate LineString', () => {
+  const outer=[at(0,0),at(30,0),at(30,30),at(0,30),at(0,0)];
+  const hole=[at(10,10),at(20,10),at(20,20),at(10,20),at(10,10)];
+  const area=feature('way',600,{building:'yes'},{
+    type:'Polygon',coordinates:[outer,hole]
+  });
+  const line=feature('way',600,{building:'yes'},{
+    type:'LineString',coordinates:outer
+  });
+  const data=normalize([street,line,area]);
+  assert.equal(world(data).buildings.length,0);
+  assert.equal(data.stats.skippedComplexBuildingAreas,1);
+  assert.equal(data.stats.duplicateLinearBuildingRepresentations,1);
+});
+
+test('safety gate blocks any duplicated source identity even when total footprint count grows', () => {
+  const previous=normalize([street,oldBuilding,schoolNode,bankNode]);
+  const oldMap=world(previous);
+  const duplicateCandidate={...oldMap,buildings:[
+    ...oldMap.buildings,
+    {...oldMap.buildings[0],outline:[...oldMap.buildings[0].outline]}
+  ]};
+  const report=compareRecovery(oldMap,navigation(previous),
+    duplicateCandidate,navigation(previous),[],'duplicated-source.geojson');
+  assert.equal(report.candidate.buildingCount,2);
+  assert.equal(report.candidate.uniqueBuildingCount,1);
+  assert.deepEqual(report.candidate.duplicateBuildingSources,['way/101']);
+  assert.equal(report.passedSafetyGate,false);
+  assert.ok(report.reviewWarnings.some(line=>line.includes('multiple 3D footprints')));
+});

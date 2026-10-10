@@ -653,6 +653,7 @@ export class EuropaGame {
         x: p.x, feetY: p.y - PLAYER_HEIGHT / 2, z: p.z,
         yaw: this.yaw, speed: this.movingSpeed, sprinting: this.sprinting,
         grounded: this.grounded, holdingGun: this.getEquippedWeapon()?.hasGun ?? false,
+        weaponId: this.getEquippedWeapon()?.hasGun ? this.activeWeaponId : null,
         visible: this.cameraMode === 'third'
       });
       const hint = playing ? (this.abandonedCar?.interactionLabel(

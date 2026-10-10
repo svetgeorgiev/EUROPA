@@ -1,11 +1,13 @@
 import {
-  AbstractMesh, Mesh, MeshBuilder, Scene, SceneLoader, TransformNode, Vector3
+  AbstractMesh, Color3, Mesh, MeshBuilder, Scene, SceneLoader,
+  StandardMaterial, TransformNode, Vector3
 } from '@babylonjs/core';
 import '@babylonjs/loaders/glTF';
 
 /**
- * One local, manually placed prototype asset. No OSM data is modified.
- * The GLB is deliberately not stored in Git while its size/licence are reviewed.
+ * EUROPA-002E vehicle prototype.
+ * Uses a visible low-poly stand-in until the local Sketchfab GLB has loaded.
+ * Not part of the generated OSM geography, and never committed as an asset.
  */
 const CAR_URL = '/assets/vehicles/abandoned-car.glb';
 const STATE_KEY = 'europa-002e-abandoned-car-searched-v1';
@@ -15,35 +17,119 @@ const INTERACTION_DISTANCE = 4;
 export class AbandonedCar {
   private root: TransformNode | null = null;
   private collider: Mesh | null = null;
+  private standIn: Mesh[] = [];
+  private standInMaterials: StandardMaterial[] = [];
   private searched = false;
   private disposed = false;
+  private centre: { x: number; z: number } | null = null;
 
   constructor(private readonly scene: Scene, private readonly notify: (message: string) => void) {
     try { this.searched = localStorage.getItem(STATE_KEY) === 'true'; }
-    catch { /* Private browsing or blocked storage: session-only state. */ }
+    catch { /* Private mode may prohibit storage. */ }
+  }
+
+  get location(): { x: number; z: number } | null {
+    return this.centre ? { ...this.centre } : null;
+  }
+
+  private createStandIn(x: number, z: number): void {
+    // An obvious car-shaped placeholder is useful while a 66 MB GLB is loading,
+    // or when it is missing. It deliberately doesn't pretend to be the real asset.
+    const paint = new StandardMaterial('vehicle-placeholder-orange', this.scene);
+    paint.diffuseColor = Color3.FromHexString('#d87732');
+    const glass = new StandardMaterial('vehicle-placeholder-windows', this.scene);
+    glass.diffuseColor = Color3.FromHexString('#273941');
+    const tires = new StandardMaterial('vehicle-placeholder-tires', this.scene);
+    tires.diffuseColor = Color3.FromHexString('#151b1d');
+    this.standInMaterials.push(paint, glass, tires);
+    const body = MeshBuilder.CreateBox('vehicle-standin-body', {
+      width: 2.05, height: 0.85, depth: 4.4
+    }, this.scene);
+    body.position.set(x, 0.77, z);
+    body.material = paint;
+    const roof = MeshBuilder.CreateBox('vehicle-standin-cabin', {
+      width: 1.72, height: 0.76, depth: 2.25
+    }, this.scene);
+    roof.position.set(x, 1.48, z - 0.28);
+    roof.material = glass;
+    this.standIn.push(body, roof);
+    for (const xOffset of [-1.03, 1.03]) {
+      for (const zOffset of [-1.43, 1.43]) {
+        const tire = MeshBuilder.CreateCylinder('vehicle-standin-wheel', {
+          diameter: 0.66, height: 0.22, tessellation: 12
+        }, this.scene);
+        tire.rotation.z = Math.PI / 2;
+        tire.position.set(x + xOffset, 0.42, z + zOffset);
+        tire.material = tires;
+        this.standIn.push(tire);
+      }
+    }
+    this.standIn.forEach(mesh => {
+      mesh.isPickable = false;
+      mesh.checkCollisions = false;
+    });
+  }
+
+  private clearStandIn(): void {
+    for (const mesh of this.standIn) mesh.dispose();
+    this.standIn = [];
+    for (const material of this.standInMaterials) material.dispose();
+    this.standInMaterials = [];
+  }
+
+  private createCollider(x: number, z: number, width: number, height: number, depth: number): void {
+    this.collider?.dispose();
+    this.collider = MeshBuilder.CreateBox('abandoned-car-collision', { width, height, depth }, this.scene);
+    this.collider.position.set(x, height / 2, z);
+    this.collider.isVisible = false;
+    this.collider.isPickable = false;
+    this.collider.checkCollisions = true;
   }
 
   async load(x: number, z: number): Promise<void> {
+    if (this.disposed) return;
+    this.centre = { x, z };
+    this.createStandIn(x, z);
+    this.createCollider(x, z, 2.25, 1.9, 4.55);
+    this.notify('Vehicle at X ' + x.toFixed(0) + ', Z ' + z.toFixed(0) +
+      ' · loading Sketchfab GLB (orange placeholder visible)');
     const root = new TransformNode('abandoned-car-root', this.scene);
     this.root = root;
     try {
-      // Load into the game scene; Babylon loader is registered by the side-effect import.
-      const result = await SceneLoader.ImportMeshAsync('', '/assets/vehicles/', 'abandoned-car.glb', this.scene);
+      let lastProgress = -1;
+      const result = await SceneLoader.ImportMeshAsync(
+        '', '/assets/vehicles/', 'abandoned-car.glb', this.scene,
+        event => {
+          if (!event.lengthComputable || !event.total || this.disposed) return;
+          const step = Math.min(4, Math.floor((event.loaded / event.total) * 4));
+          if (step > lastProgress && step < 4) {
+            lastProgress = step;
+            this.notify('Vehicle GLB download: ' + step * 25 + '%');
+          }
+        }
+      );
       if (this.disposed) {
-        result.meshes.forEach(mesh => mesh.dispose());
+        result.meshes.forEach(mesh => mesh.dispose(false, true));
         root.dispose();
         return;
       }
-      const meshes = result.meshes.filter((mesh): mesh is AbstractMesh => mesh instanceof AbstractMesh);
-      const topLevel = meshes.filter(mesh => !mesh.parent || !meshes.includes(mesh.parent as AbstractMesh));
-      topLevel.forEach(mesh => { mesh.parent = root; });
+
+      // Keep the entire imported node hierarchy, including non-mesh glTF nodes.
+      const nodes: TransformNode[] = [...result.transformNodes, ...result.meshes];
+      const imported = new Set(nodes);
+      nodes.filter(node => !node.parent || !imported.has(node.parent as TransformNode))
+        .forEach(node => { node.parent = root; });
       root.computeWorldMatrix(true);
-      meshes.forEach(mesh => mesh.computeWorldMatrix(true));
-      const bounds = meshes.filter(mesh => mesh.getTotalVertices() > 0);
-      if (!bounds.length) throw new Error('GLB has no renderable geometry');
+
+      const renderable = result.meshes.filter(
+        (mesh): mesh is AbstractMesh => mesh instanceof AbstractMesh && mesh.getTotalVertices() > 0
+      );
+      if (!renderable.length) throw new Error('GLB contains no renderable meshes');
+
       const min = new Vector3(Infinity, Infinity, Infinity);
       const max = new Vector3(-Infinity, -Infinity, -Infinity);
-      for (const mesh of bounds) {
+      for (const mesh of renderable) {
+        mesh.computeWorldMatrix(true);
         const box = mesh.getBoundingInfo().boundingBox;
         min.minimizeInPlace(box.minimumWorld);
         max.maximizeInPlace(box.maximumWorld);
@@ -51,32 +137,33 @@ export class AbandonedCar {
         mesh.checkCollisions = false;
       }
       const dimensions = max.subtract(min);
-      const longest = Math.max(dimensions.x, dimensions.z);
-      if (!(longest > 0.001) || !Number.isFinite(longest)) throw new Error('Invalid GLB dimensions');
-      const scale = TARGET_LENGTH_METRES / longest;
-      // Move geometry so ground-contact is y=0; GLB orientation should be checked in game.
+      const footprintLength = Math.max(dimensions.x, dimensions.z);
+      if (!Number.isFinite(footprintLength) || footprintLength < 0.001) {
+        throw new Error('Invalid GLB bounds');
+      }
+      const scale = TARGET_LENGTH_METRES / footprintLength;
       root.scaling.setAll(scale);
       root.position.set(
-        x - ((min.x + max.x) / 2) * scale,
+        x - (min.x + max.x) * 0.5 * scale,
         -min.y * scale,
-        z - ((min.z + max.z) / 2) * scale
+        z - (min.z + max.z) * 0.5 * scale
       );
-      // Simple box collider, rather than 3D mesh-by-mesh physics.
-      this.collider = MeshBuilder.CreateBox('abandoned-car-collision', {
-        width: Math.max(1.5, dimensions.x * scale),
-        height: Math.max(1.2, dimensions.y * scale),
-        depth: Math.max(1.5, dimensions.z * scale)
-      }, this.scene);
-      this.collider.position.set(x, Math.max(1.2, dimensions.y * scale) / 2, z);
-      this.collider.isVisible = false;
-      this.collider.isPickable = false;
-      this.collider.checkCollisions = true;
-      this.notify('Abandoned vehicle loaded · E to search when nearby');
+      root.computeWorldMatrix(true);
+      this.createCollider(
+        x, z,
+        Math.max(1.5, dimensions.x * scale),
+        Math.max(1.2, dimensions.y * scale),
+        Math.max(1.5, dimensions.z * scale)
+      );
+      this.clearStandIn();
+      this.notify('Sketchfab vehicle loaded at X ' + x.toFixed(0) + ', Z ' + z.toFixed(0) + ' · press V to visit');
     } catch (error) {
       root.dispose(false, true);
       this.root = null;
-      this.notify('Vehicle unavailable: verify ' + CAR_URL + ' (' +
-        (error instanceof Error ? error.message : String(error)) + ')');
+      // Keep the placeholder in the scene so location and E interaction still work.
+      const detail = error instanceof Error ? error.message : String(error);
+      this.notify('Sketchfab GLB failed (' + detail + '). Orange placeholder active; check ' + CAR_URL);
+      console.error('EUROPA: abandoned car GLB failed', error);
     }
   }
 
@@ -95,8 +182,8 @@ export class AbandonedCar {
     const label = this.interactionLabel(player, yaw);
     if (!label || this.searched) return false;
     this.searched = true;
-    try { localStorage.setItem(STATE_KEY, 'true'); } catch { /* Session-only fallback */ }
-    this.notify('Vehicle searched: found 1 bottled water and a bandage (inventory coming later)');
+    try { localStorage.setItem(STATE_KEY, 'true'); } catch { /* Session fallback */ }
+    this.notify('Vehicle searched: water and bandage (inventory not implemented yet)');
     return true;
   }
 
@@ -106,5 +193,6 @@ export class AbandonedCar {
     this.collider = null;
     this.root?.dispose(false, true);
     this.root = null;
+    this.clearStandIn();
   }
 }

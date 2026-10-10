@@ -15,3 +15,5 @@ public/worlds/*/navigation.json
 public/worlds/*/sites.json
 public/worlds/*.recovery-stage-*/
 public/worlds/*.recovery-backup-*/
+# EUROPA-002E: locally licensed asset; keep out of ordinary Git pushes until optimised
+public/assets/vehicles/abandoned-car.glb

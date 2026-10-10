@@ -36,3 +36,7 @@
 .weapon-hud__ammo strong{font-size:38px;font-weight:900;color:#fff}
 .weapon-hud__controls{font-size:9px;color:#c5cbc8;letter-spacing:.03em}
 @media(max-width:650px){.weapon-hud{right:12px;bottom:24px;min-width:155px;padding:10px}.weapon-hud__ammo strong{font-size:29px}}
+
+/* EUROPA-002G: camera inspection indicator; no game interaction handling in CSS. */
+.camera-mode-hint{position:absolute;top:70px;left:50%;transform:translateX(-50%);max-width:95vw;z-index:8;padding:9px 13px;border:1px solid #b7c58c88;border-radius:5px;background:#111d1de8;color:#e7dfc5;font-size:10px;font-weight:750;letter-spacing:.06em;text-align:center;pointer-events:none}
+@media(max-width:650px){.camera-mode-hint{top:120px;font-size:9px}}

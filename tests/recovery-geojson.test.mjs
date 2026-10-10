@@ -244,8 +244,10 @@ test('geometry inspection identifies both valid and boundary-rejected outlines',
   const smallSliver=inspectBuildingFootprint(shape([
     [499.99,10],[520,10],[520,30],[499.99,30],[499.99,10]
   ]),anchor);
-  assert.equal(smallSliver.status,'clip-rejected');
+  assert.equal(smallSliver.status,'boundary-sliver');
   assert.ok(smallSliver.sourceAreaMeters2>100);
+  assert.ok(smallSliver.importedAreaMeters2>0.05);
+  assert.ok(smallSliver.importedAreaMeters2<8);
 });
 
 test('read-only CLI inspector finds simple one-ring MultiPolygon without modifying map data', async () => {
@@ -265,4 +267,37 @@ test('read-only CLI inspector finds simple one-ring MultiPolygon without modifyi
     rawCount:2, normalizedCount:1, importedCount:1});
   assert.ok(messages.some(s=>s.includes('Clipping status: accepted')));
   assert.ok(messages.some(s=>s.includes('MultiPolygon, polygons=1')));
+});
+
+
+test('boundary exception applies only to a measured fragment from actual OSM geometry and an old edge building', () => {
+  const base=normalize([street,oldBuilding,schoolNode,bankNode]);
+  const candidate=normalize([street,oldBuilding,addedBuilding,schoolNode,bankNode]);
+  const oldMap=world(base);
+  const ghost={
+    id:1016083252,sourceId:'way/1016083252',heightMeters:6,
+    outline:[{x:370,z:-505},{x:384,z:-505},{x:384,z:-499.7},{x:370,z:-499.7}]
+  };
+  oldMap.buildings.push(ghost);
+  const evidence={
+    sourceId:'way/1016083252',sourceAreaMeters2:74.2,
+    inWorldAreaMeters2:4.2,
+    bounds:{minX:370,maxX:384,minZ:-505,maxZ:-499.7}
+  };
+  const report=compareRecovery(oldMap,navigation(base),
+    world(candidate),navigation(candidate),[],'edge-fixture.geojson',[evidence]);
+  assert.deepEqual(report.missingBuildingSources,['way/1016083252']);
+  assert.deepEqual(report.unexplainedMissingBuildingSources,[]);
+  assert.deepEqual(report.boundaryFragmentExclusions,[evidence]);
+  assert.equal(report.passedSafetyGate,true);
+
+  // A missing interior building cannot be excused by a copied/fabricated
+  // border-fragment record for the same source ID.
+  const altered={...oldMap,buildings:oldMap.buildings.map(b=>
+    b.sourceId === 'way/1016083252'
+      ? {...b,outline:[{x:0,z:0},{x:5,z:0},{x:5,z:5},{x:0,z:5}]} : b)};
+  const blocked=compareRecovery(altered,navigation(base),
+    world(candidate),navigation(candidate),[],'edge-fixture.geojson',[evidence]);
+  assert.equal(blocked.passedSafetyGate,false);
+  assert.deepEqual(blocked.unexplainedMissingBuildingSources,['way/1016083252']);
 });

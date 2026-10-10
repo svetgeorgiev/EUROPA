@@ -6,6 +6,7 @@ import { buildWorldMap, isWorldMap } from '../src/world/osm.ts';
 import { buildNavigationData, isNavigationData } from '../src/world/navigation.ts';
 import { splitWorldMap } from '../src/world/chunkGrid.ts';
 import { normalizeOsmiumGeoJSON } from '../src/world/recoveryInput.ts';
+import { inspectBuildingFootprint } from '../src/world/osmBuildingImports.ts';
 import { compareRecovery } from '../src/world/recoveryAudit.ts';
 import { normalizeCoreMapJSON } from './osm-core-api.mjs';
 import { NOVA_ZAGORA_ANCHOR } from '../src/geo/worldConfig.ts';
@@ -145,6 +146,39 @@ export async function publishRecoveredWorld(
   }
 }
 
+/**
+ * A source ID is not "lost" if the same actual source polygon intersects
+ * the world only as a geometrically unusable, sub-8m² boundary fragment.
+ * Discover evidence from THIS import; never infer it from nearest POIs or
+ * accept manual IDs supplied by the CLI.
+ */
+function measureMissingBoundaryFragments(oldMap, newMap, elements, anchor) {
+  const current = new Set(newMap.buildings.map(building =>
+    building.sourceId ?? 'way/' + building.id));
+  const candidates = new Map(elements
+    .filter(element => element.tags?.building && element.tags.building !== 'no' &&
+      Array.isArray(element.geometry))
+    .map(element => [element.type + '/' + element.id, element]));
+  const measured = [];
+  for (const existing of oldMap.buildings) {
+    const sourceId = existing.sourceId ?? 'way/' + existing.id;
+    if (current.has(sourceId)) continue;
+    const feature = candidates.get(sourceId);
+    if (!feature) continue;
+    const diagnosis = inspectBuildingFootprint(feature.geometry, anchor);
+    if (diagnosis.status !== 'boundary-sliver' ||
+        diagnosis.sourceAreaMeters2 === null ||
+        diagnosis.importedAreaMeters2 === null || !diagnosis.bounds) continue;
+    measured.push({
+      sourceId,
+      sourceAreaMeters2: diagnosis.sourceAreaMeters2,
+      inWorldAreaMeters2: diagnosis.importedAreaMeters2,
+      bounds: diagnosis.bounds
+    });
+  }
+  return measured;
+}
+
 export async function previewBuildingRecovery({
   inputPath, worldDir = DEFAULT_WORLD, reportPath = DEFAULT_REPORT,
   sourceDate, apply = false, logger = console,
@@ -165,8 +199,10 @@ export async function previewBuildingRecovery({
     throw new Error('Recovery candidate failed map/navigation validation');
   }
 
+  const borderEvidence = measureMissingBoundaryFragments(oldMap, map,
+    normalized.data.elements, NOVA_ZAGORA_ANCHOR);
   const comparison = compareRecovery(oldMap, oldNav, map, nav,
-    normalized.sites, basename(inputPath));
+    normalized.sites, basename(inputPath), borderEvidence);
   const report = {
     schemaVersion: 1,
     sourceType: normalized.format,
@@ -190,6 +226,15 @@ export async function previewBuildingRecovery({
     (report.newBuildingSources.join(', ') || 'none'));
   logger.info('Existing building IDs missing (' + report.missingBuildingSources.length + '): ' +
     (report.missingBuildingSources.join(', ') || 'none'));
+  for (const fragment of report.boundaryFragmentExclusions) {
+    logger.info('DOCUMENTED BOUNDARY EXCLUSION: ' + fragment.sourceId +
+      ' — real building area ' + fragment.sourceAreaMeters2.toFixed(2) +
+      'm²; inside playable world only ' + fragment.inWorldAreaMeters2.toFixed(2) +
+      'm² (<8m² minimum). Physical mesh intentionally skipped.');
+  }
+  logger.info('Unexplained missing building IDs (' +
+    report.unexplainedMissingBuildingSources.length + '): ' +
+    (report.unexplainedMissingBuildingSources.join(', ') || 'none'));
   logger.info('Road segments: ' + report.before.roadsCount + ' → ' + report.candidate.roadsCount);
   logger.info('Named POIs: ' + report.before.namedLandmarks + ' → ' + report.candidate.namedLandmarks);
   logger.info('Landmarks inside building: ' + report.before.countByGeometry['inside-imported-building'] +
@@ -213,7 +258,7 @@ export async function previewBuildingRecovery({
     return report;
   }
   if (!report.passedSafetyGate) {
-    throw new Error('Apply blocked: source reduces coverage or removes existing building IDs. Read the preview report; existing files untouched.');
+    throw new Error('Apply blocked: source reduces coverage, contains duplicate buildings, or has unexplained missing building IDs. Read the preview report; existing files untouched.');
   }
   await publishRecoveredWorld(worldDir, map, nav, normalized.sites,
     { logger, failAfterSwap });

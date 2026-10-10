@@ -64,7 +64,10 @@ export function inspectRecoveryBuilding(raw, sourceId, logger = console) {
         ', Z=' + b.minZ.toFixed(1) + '…' + b.maxZ.toFixed(1));
       logger.info(' - Gameplay bounds: X=-500…500, Z=-500…500');
     }
-    if (result.status === 'clip-rejected') {
+    if (result.status === 'boundary-sliver') {
+      logger.info(' - Only a tiny fragment reaches the 1km² playable world. ' +
+        'It remains below the 8m² collision/rendering minimum.');
+    } else if (result.status === 'clip-rejected') {
       logger.info(' - Geometry intersects the world bounding rectangle but ' +
         'could not produce an allowed simple clipped footprint. Current constraints: ' +
         'one valid outer ring, area >=8m², <=150000m², <=300 vertices.');

@@ -136,3 +136,47 @@ around the game; a structure wholly outside the gameplay boundary is
 correctly excluded. Existing OSM-derived map, chunks and navigation
 remain unchanged until explicit \`--apply\` following review.
 
+
+
+## 2026-10-10 — Edge building \`way/1016083252\` (diagnosed)
+
+The first offline import gave 127 → 129 real unique building IDs, with one
+previous ID missing: \`way/1016083252\`. The actual extracted OSM PBF
+contains the building; \`osmium export\` emits it as both a LineString and a
+**single Polygon with a single ring** in MultiPolygon form. This is legitimate.
+
+Read-only \`map:inspect\` output established:
+- full actual building outline: **76.71 m²**;
+- bounds: **X 371.2…385.4, Z −508.1…−498.6** (south edge);
+- only a sliver intersects the playable square X/Z ±500;
+- that intersection is rejected by the minimum **8 m²** footprint rule.
+
+The pipeline now measures a *genuine simple clipped fragment* from the current
+OSM geometry. Only a **positive clipped area below 8 m²** associated with
+an *existing OSM building ID whose previous geometry was also at the playable
+boundary* is classified as a **documented boundary exclusion**. The missing
+source ID remains visible in the report, along with the original and in-world
+areas. The safety gate permits this specific explained exception **only** when
+all other building-count, road, POI and duplicate-ID checks pass. Any missing
+interior building, missing source feature, malformed geometry or unexplained
+missing ID still BLOCKS apply. The importer never fabricates a building,
+creates a tiny unsafe collision wall or globally weakens the 8m² minimum.
+
+To review the safe classification, rerun:
+
+\`\`\`powershell
+git pull --ff-only
+pnpm map:inspect --input "D:\OSM\nova-zagora-small.geojson" --id way/1016083252
+pnpm map:recover --input "D:\OSM\nova-zagora-small.geojson"
+\`\`\`
+
+Expect **DOCUMENTED BOUNDARY EXCLUSION**, exact in-game intersection area,
+**Unexplained missing building IDs (0)** and **Safety gate: PASS** if no other
+regressions exist and old geometry also lies at the map edge. An explicit
+\`--apply\` after human review is still required; do not apply automatically.
+After applying, the world may display 129 buildings, including three genuinely
+new OSM source IDs and excluding this tiny boundary sliver.
+
+The school-site audit remains separate: СУ Иван Вазов has three mapped
+building footprints inside its campus, but the POI itself may remain unmatched.
+This is not evidence that the physical school complex is missing.

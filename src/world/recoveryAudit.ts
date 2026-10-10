@@ -118,21 +118,36 @@ export function auditLandmarks(
   };
 }
 
+/** Strictly measured from a real OSM building outline that overlaps the
+ * playable square by less than the 8m² collider threshold. */
+export interface BoundaryFragmentExclusion {
+  sourceId: string;
+  sourceAreaMeters2: number;
+  inWorldAreaMeters2: number;
+  bounds: { minX: number; maxX: number; minZ: number; maxZ: number };
+}
 export interface RecoveryComparison {
   source: string;
   before: RecoveryAudit;
   candidate: RecoveryAudit;
   newBuildingSources: string[];
   missingBuildingSources: string[];
+  boundaryFragmentExclusions: BoundaryFragmentExclusion[];
+  unexplainedMissingBuildingSources: string[];
   addedBuildingCount: number;
   addedCampusSites: number;
   reviewWarnings: string[];
   passedSafetyGate: boolean;
 }
+// Previous 3D representations reaching within 5m of the real world edge
+// may have been kept by an older import even if their clipped fragment is tiny.
+const LIMIT_BORDER_METRES = 495;
+
 export function compareRecovery(
   oldMap: WorldMap, oldNavigation: NavigationData,
   candidateMap: WorldMap, candidateNavigation: NavigationData,
-  sites: readonly RecoverySite[], source: string
+  sites: readonly RecoverySite[], source: string,
+  measuredBorderFragments: readonly BoundaryFragmentExclusion[] = []
 ): RecoveryComparison {
   const previous = new Set(oldMap.buildings.map(building =>
     building.sourceId ?? 'way/' + building.id));
@@ -140,6 +155,28 @@ export function compareRecovery(
     building.sourceId ?? 'way/' + building.id));
   const newBuildingSources = [...next].filter(id => !previous.has(id)).sort();
   const missingBuildingSources = [...previous].filter(id => !next.has(id)).sort();
+  // Boundary exclusions are accepted ONLY when sourced from a positive,
+  // sub-8m² simple clipping result AND the OLD footprint was itself
+  // on the game boundary. A missing interior building remains a blocker.
+  const boundaryFragmentExclusions: BoundaryFragmentExclusion[] = [];
+  const unexplainedMissingBuildingSources: string[] = [];
+  for (const id of missingBuildingSources) {
+    const legacyFootprint = oldMap.buildings.find(b => buildingSourceId(b) === id);
+    const fragment = measuredBorderFragments.find(item => item.sourceId === id);
+    const oldAtBorder = legacyFootprint?.outline.some(p =>
+      p.x <= -LIMIT_BORDER_METRES || p.x >= LIMIT_BORDER_METRES ||
+      p.z <= -LIMIT_BORDER_METRES || p.z >= LIMIT_BORDER_METRES);
+    const valid = fragment && oldAtBorder &&
+      Number.isFinite(fragment.inWorldAreaMeters2) &&
+      fragment.inWorldAreaMeters2 > 0.05 && fragment.inWorldAreaMeters2 < 8 &&
+      Number.isFinite(fragment.sourceAreaMeters2) &&
+      fragment.sourceAreaMeters2 >= 8 &&
+      Object.values(fragment.bounds).every(Number.isFinite) &&
+      (fragment.bounds.minX < -500 || fragment.bounds.maxX > 500 ||
+       fragment.bounds.minZ < -500 || fragment.bounds.maxZ > 500);
+    if (valid) boundaryFragmentExclusions.push(fragment);
+    else unexplainedMissingBuildingSources.push(id);
+  }
   const before = auditLandmarks(oldMap, oldNavigation);
   const candidate = auditLandmarks(candidateMap, candidateNavigation, sites);
   const reviewWarnings: string[] = [];
@@ -159,13 +196,22 @@ export function compareRecovery(
     reviewWarnings.push(candidate.duplicateBuildingSources.length +
       ' OSM building IDs generate multiple 3D footprints; apply blocked.');
   }
-  if (missingBuildingSources.length > 0) {
-    reviewWarnings.push(missingBuildingSources.length +
-      ' previously imported OSM building source IDs are no longer in candidate data.');
+  if (boundaryFragmentExclusions.length) {
+    reviewWarnings.push(boundaryFragmentExclusions.length +
+      ' genuine OSM building footprints have only a sub-8m² boundary ' +
+      'fragment inside the playable world; excluded from physical geometry ' +
+      '(review before explicitly applying).');
+  }
+  if (unexplainedMissingBuildingSources.length) {
+    reviewWarnings.push(unexplainedMissingBuildingSources.length +
+      ' previously imported OSM building source IDs are absent without a ' +
+      'verified boundary-fragment explanation; apply blocked.');
   }
   return {
     source, before, candidate, newBuildingSources,
     missingBuildingSources,
+    boundaryFragmentExclusions,
+    unexplainedMissingBuildingSources,
     addedBuildingCount: candidateMap.buildings.length - oldMap.buildings.length,
     addedCampusSites: sites.length,
     reviewWarnings,
@@ -175,6 +221,6 @@ export function compareRecovery(
       candidateMap.roads.length >= oldMap.roads.length * 0.9 &&
       candidateNavigation.streets.length >= oldNavigation.streets.length * 0.75 &&
       candidateNavigation.landmarks.length >= oldNavigation.landmarks.length * 0.75 &&
-      missingBuildingSources.length === 0
+      unexplainedMissingBuildingSources.length === 0
   };
 }

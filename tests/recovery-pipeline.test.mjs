@@ -152,3 +152,51 @@ test('integration: osmium dual area+line export yields real 2 building IDs, not 
     assert.equal(report.passedSafetyGate,true);
   } finally { await rm(fix.root,{recursive:true,force:true}); }
 });
+
+
+test('realistic one-ring OSM boundary fragment is transparently reported and does not disable other safety checks', async () => {
+  const fix=await makeFixture();
+  try {
+    const id=1016083252;
+    // Whole building remains a valid ~74 m² OSM polygon but only
+    // 4.2 m² extends inside the gameplay rectangle at Z=-500.
+    const ring=[at(370,-505),at(384,-505),at(384,-499.7),
+      at(370,-499.7),at(370,-505)];
+    const old=JSON.parse(await readFile(join(fix.worldDir,'map.json'),'utf8'));
+    old.buildings.push({
+      id,sourceId:'way/'+id,heightMeters:6,
+      outline:[{x:370,z:-505},{x:384,z:-505},
+        {x:384,z:-499.7},{x:370,z:-499.7}]
+    });
+    await writeFile(join(fix.worldDir,'map.json'),JSON.stringify(old));
+    const exportData=raw([street,baselineBuilding,addedBuilding,poi,named,
+      feature('way',id,{building:'yes'},{
+        type:'LineString',coordinates:ring
+      }),
+      feature('way',id,{building:'yes'},{
+        type:'MultiPolygon',coordinates:[[ring]]
+      })
+    ]);
+    await writeFile(fix.inputPath,JSON.stringify(exportData));
+    const report=await previewBuildingRecovery(fix);
+    assert.equal(report.candidate.buildingCount,2);
+    assert.equal(report.before.buildingCount,2);
+    assert.deepEqual(report.missingBuildingSources,['way/'+id]);
+    assert.equal(report.boundaryFragmentExclusions.length,1);
+    assert.ok(report.boundaryFragmentExclusions[0].inWorldAreaMeters2<8);
+    assert.deepEqual(report.unexplainedMissingBuildingSources,[]);
+    assert.equal(report.passedSafetyGate,true);
+    assert.equal(JSON.parse(await readFile(join(fix.worldDir,'map.json'),'utf8'))
+      .buildings.length,2,'preview remains read-only');
+    // An unrelated old *interior* building must still block the apply gate.
+    old.buildings.push({
+      id:999,sourceId:'way/999',heightMeters:6,
+      outline:[{x:0,z:10},{x:6,z:10},{x:6,z:16},{x:0,z:16}]
+    });
+    await writeFile(join(fix.worldDir,'map.json'),JSON.stringify(old));
+    const blocked=await previewBuildingRecovery(fix);
+    assert.deepEqual(blocked.unexplainedMissingBuildingSources,['way/999']);
+    assert.equal(blocked.passedSafetyGate,false);
+    await assert.rejects(previewBuildingRecovery({...fix,apply:true}),/Apply blocked/);
+  } finally {await rm(fix.root,{recursive:true,force:true});}
+});

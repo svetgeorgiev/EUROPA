@@ -38,12 +38,17 @@ The built-in 001 fallback scene is **synthetic**. Run `pnpm map:fetch --osm-api`
 
 A WGS84 local-tangent projection and a location HUD were added in 002A. The HUD remains clearly labelled **simulated** while the synthetic scene is active. See [docs/GEO-002A.md](docs/GEO-002A.md). Run `pnpm test` for geographic and OSM importer tests.
 
+## Recognisable Nova Zagora — 002D.1
+
+Import *real OSM names and public landmarks* into an independent optional navigation file. See [the 002D.1 guide](docs/GEO-002D-NAVIGATION.md). If you already saved raw OSM JSON, use `pnpm map:nav --input PATH`; otherwise a manually requested, one-time prototype fetch is available via `pnpm map:nav --osm-api`. Neither option rewrites map.json or existing 250m chunks.
+
 ## Roadmap
 
 - **001**: browser engine and movement (playtested)
 - **002A**: geographic coordinate foundation (merged)
 - **002B**: OpenStreetMap import and generated roads/buildings (development branch)
-- **002C**: 250m tile generation and local streaming (development branch). See [002C guide](docs/GEO-002C.md).
+- **002C**: 250m tile generation and local streaming (merged). See [002C guide](docs/GEO-002C.md).
+- **002D.1**: real OSM street names and available public landmarks (development branch)
 
 ## License
 

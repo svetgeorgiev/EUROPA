@@ -2,6 +2,7 @@
 import { onMounted, onBeforeUnmount, ref } from 'vue';
 import LocalMap from './components/LocalMap.vue';
 import { isWorldMap, type WorldMap } from './world/osm';
+import { isNavigationData, type NavigationData } from './world/navigation';
 import { EuropaGame, type GameStats } from './game/EuropaGame';
 import type { ChunkStreamStats } from './world/ChunkStreamer';
 import { computed } from 'vue';
@@ -14,6 +15,7 @@ const worldMode = ref<'test' | 'osm' | 'stream'>('test');
 const stream = ref<ChunkStreamStats>({ current: '—', loaded: 0, desired: 0, loading: 0, failed: 0, available: 0, failedIds: [], lastError: '' });
 const stats = ref<GameStats>({ fps: 0, x: 0, y: 0, z: 0, yaw: 0, grounded: false });
 const fullMap = ref<WorldMap | null>(null);
+const navigation = ref<NavigationData | null>(null);
 const overview = ref(false);
 const mapAbort = new AbortController();
 const previewGeo = computed(() => worldToGeo({ x: stats.value.x, y: 0, z: stats.value.z }, NOVA_ZAGORA_ANCHOR));
@@ -41,6 +43,17 @@ onMounted(() => {
     if (isWorldMap(data)) fullMap.value = data;
   }).catch(error => {
     if (!mapAbort.signal.aborted) console.info('EUROPA: optional navigation map unavailable', error);
+  });
+  // Served by Vite from local disk. No live OSM requests during gameplay.
+  void fetch('/worlds/nova-zagora/navigation.json', {
+    cache: 'no-store', signal: mapAbort.signal
+  }).then(async response => {
+    if (!response.ok) return; // Existing 002C world works without labels.
+    const data: unknown = await response.json();
+    if (isNavigationData(data, NOVA_ZAGORA_ANCHOR)) navigation.value = data;
+    else console.warn('EUROPA: invalid or mismatched OSM navigation metadata.');
+  }).catch(error => {
+    if (!mapAbort.signal.aborted) console.info('EUROPA: optional street labels unavailable', error);
   });
   if (!canvas.value) return;
   game = new EuropaGame(canvas.value, {
@@ -70,7 +83,7 @@ function start(): void { game?.requestPointerLock(); }
       TILE {{ stream.current }} · {{ stream.loaded }}/{{ stream.available }} loaded · {{ stream.loading }} loading · {{ stream.failed }} failed
       <template v-if="stream.failed"> ({{ stream.failedIds.join(', ') }}) · PRESS T TO RETRY</template>
     </div>
-    <LocalMap v-if="worldMode !== 'test' && fullMap" :map="fullMap" :x="stats.x" :z="stats.z" :yaw="stats.yaw" :overview="overview" />
+    <LocalMap v-if="worldMode !== 'test' && fullMap" :map="fullMap" :navigation="navigation" :x="stats.x" :z="stats.z" :yaw="stats.yaw" :overview="overview" />
     <a v-if="worldMode !== 'test'" class="osm-location" :href="osmUrl" target="_blank" rel="noopener noreferrer">VIEW LOCATION ON OPENSTREETMAP ↗</a>
     <div v-if="error" style="position:absolute;top:90px;left:24px;right:24px;padding:16px;background:#5b1414;color:white;z-index:30;overflow-wrap:anywhere">Game engine error: {{ error }} — press F12 for details.</div>
     <div v-if="locked" class="crosshair" aria-hidden="true">+</div>

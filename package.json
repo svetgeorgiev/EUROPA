@@ -23,7 +23,8 @@
     "@babylonjs/core": "^7.54.3",
     "vue": "^3.5.13",
     "earcut": "^3.2.3",
-    "polygon-clipping": "^0.15.7"
+    "polygon-clipping": "^0.15.7",
+    "@babylonjs/loaders": "^7.54.3"
   },
   "devDependencies": {
     "@vitejs/plugin-vue": "^5.2.1",

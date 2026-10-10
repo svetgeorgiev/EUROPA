@@ -12,6 +12,7 @@ const props = defineProps<{
   z: number;
   yaw: number;
   overview: boolean;
+  vehicle?: { x: number; z: number } | null;
 }>();
 
 const canvas = ref<HTMLCanvasElement | null>(null);
@@ -169,6 +170,27 @@ function draw(): void {
     }
   }
 
+  // The orange vehicle pin is gameplay metadata, not an OSM-mapped real car.
+  if (props.vehicle) {
+    const [vx, vy] = project(props.vehicle.x, props.vehicle.z);
+    if (vx >= 10 && vx < n - 10 && vy >= 10 && vy < n - 10) {
+      ctx.fillStyle = '#ed9c44';
+      ctx.strokeStyle = '#101b1d';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(vx, vy, 7, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.font = 'bold 8px system-ui';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#152022';
+      ctx.fillText('C', vx, vy + 0.5);
+      ctx.textAlign = 'start';
+      ctx.textBaseline = 'alphabetic';
+    }
+  }
+
   // Player arrow remains geographic north-up; yaw 0 = facing north (+Z).
   const [px, py] = project(props.x, props.z);
   ctx.save();
@@ -203,7 +225,7 @@ function draw(): void {
 onMounted(draw);
 watch([
   () => props.x, () => props.z, () => props.yaw, () => props.map,
-  () => props.navigation, () => props.sites, () => props.overview
+  () => props.navigation, () => props.sites, () => props.overview, () => props.vehicle
 ], draw, { flush: 'post' });
 </script>
 
@@ -221,6 +243,7 @@ watch([
       <span v-if="nearbyStreet" :title="'Approximate nearest mapped label: ' + nearbyStreet.name">NEAR: {{ nearbyStreet.name }}</span>
     </div>
     <div v-else class="local-map__metadata local-map__metadata--empty">Names not imported yet · run map:nav</div>
+    <div v-if="vehicle" class="local-map__vehicle">C · Abandoned car <span>{{ Math.round(vehicle.x) }} E · {{ Math.round(vehicle.z) }} N</span></div>
     <div class="local-map__footer">Your position <span>{{ x.toFixed(0) }} E · {{ z.toFixed(0) }} N</span></div>
   </section>
 </template>
@@ -234,6 +257,8 @@ watch([
 .local-map canvas{display:block;width:100%;height:auto}
 .local-map__footer{font-size:10px;color:#b2c3bb}
 .local-map__footer span{color:#f4d6a0;font-variant-numeric:tabular-nums}
+.local-map__vehicle{display:flex;justify-content:space-between;gap:8px;padding:5px 10px;color:#ed9c44;border-top:1px solid #ffffff18;font-size:10px;font-weight:700}
+.local-map__vehicle span{color:#e9ca9e;font-variant-numeric:tabular-nums}
 .local-map__metadata{padding:5px 10px;display:flex;flex-direction:column;gap:3px;border-top:1px solid #ffffff18;color:#c2cabe;font-size:9px;line-height:1.35;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .local-map__metadata span{overflow:hidden;text-overflow:ellipsis}
 .local-map__metadata--empty{color:#e9b55e}

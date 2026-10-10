@@ -57,6 +57,7 @@ export class EuropaGame {
   // Last known non-overlapping ground position. Also powers the R unstuck key.
   private lastSafePosition: Point2 = { x: 0, z: -7 };
   private poiMarkers: PoiMarkers | null = null;
+  private poiFrameSeconds = 0;
   private worldReady = false;
 
   constructor(private readonly canvas: HTMLCanvasElement, callbacks: GameCallbacks) {
@@ -415,6 +416,13 @@ export class EuropaGame {
       if (playing) this.updateMovement(dt);
       this.updateChunkStreaming();
       this.scene.render();
+      this.poiFrameSeconds += dt;
+      if (this.poiFrameSeconds >= 0.033) {
+        this.poiFrameSeconds = 0;
+        this.poiMarkers?.update({
+          x: this.camera.position.x, z: this.camera.position.z
+        });
+      }
       this.statsElapsed += dt;
       if (this.statsElapsed >= 0.15) {
         this.statsElapsed = 0;
@@ -433,7 +441,7 @@ export class EuropaGame {
     if (this.disposed || !this.worldReady) return;
     try {
       this.poiMarkers?.dispose();
-      this.poiMarkers = new PoiMarkers(this.scene, worldMap, nav);
+      this.poiMarkers = new PoiMarkers(this.scene, this.canvas, worldMap, nav);
       this.poiMarkers.update({ x: this.camera.position.x, z: this.camera.position.z });
     } catch (error) {
       console.warn('EUROPA: optional landmark labels unavailable', error);

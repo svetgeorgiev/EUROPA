@@ -62,3 +62,8 @@ On branch `feat/europa-002d2-building-coverage-architecture`, the game displays 
 Run `pnpm map:coverage --name "TBI Bank"` offline to inspect the bank's position, nearest imported building and distance. See [building coverage guide](docs/GEO-002D2-BUILDINGS.md).
 
 A future fresh raw OSM extract can be imported with `pnpm map:fetch --input "path/to/raw-osm.json"`. The improved importer can retain building outlines crossing the square edge and simple multipolygon relations, but it still cannot create building footprints that OSM does not contain. Never repeat upstream API requests just to regenerate chunks.
+
+
+### 002D.2b — Landmarks and trees
+
+Floating landmarks now use upright HTML camera projections instead of mirrored Babylon billboards. Procedural verge trees add atmosphere in streamed chunks without inventing additional mapped buildings. [See the streetscape guide](docs/GEO-002D2-STREETSCAPE.md).

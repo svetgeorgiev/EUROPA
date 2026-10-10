@@ -9,3 +9,12 @@
 .osm-location{position:absolute;top:139px;right:25px;color:#dfca98;font-size:10px;font-weight:700;letter-spacing:.06em;text-decoration:none;background:#102024ca;padding:7px 11px;border:1px solid #ffffff22;border-radius:4px;z-index:5}.osm-location:hover{text-decoration:underline}@media(max-width:650px){.osm-location{top:195px;left:28px;right:auto}}
 
 .stream-debug--failed{border-color:#e9b55e;color:#ffd08b;box-shadow:0 0 0 1px #e9b55e22}
+
+/* 002D.2: camera-projected HTML markers never mirror Cyrillic text. */
+.poi-marker-layer{position:absolute;inset:0;z-index:3;pointer-events:none;overflow:hidden}
+.poi-marker{position:absolute;transform:translate(-50%,-115%);max-width:235px;min-width:140px;padding:7px 10px;background:#142522ee;border:1px solid #a8bb9a;border-radius:4px;box-shadow:0 3px 18px #0008;color:#f5efe2;text-align:center;font-family:system-ui,sans-serif;line-height:1.25;white-space:normal;overflow-wrap:anywhere}
+.poi-marker strong{display:block;font-size:13px;font-weight:700}
+.poi-marker span{display:block;margin-top:3px;color:#d3e0c7;font-size:9px;font-weight:600;letter-spacing:.035em}
+.poi-marker--no-footprint{border-color:#d6a960;background:#372c1cee}
+.poi-marker--no-footprint span{color:#e9b969}
+.poi-marker[hidden]{display:none}

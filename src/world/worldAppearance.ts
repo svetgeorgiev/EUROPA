@@ -79,6 +79,8 @@ export interface WorldMaterials {
   shoulder: StandardMaterial;
   marking: StandardMaterial;
   facadeDetail: StandardMaterial;
+  treeBark: StandardMaterial;
+  treeFoliage: StandardMaterial;
   roofs: StandardMaterial[];
   walls: StandardMaterial[];
   dispose: () => void;
@@ -93,6 +95,10 @@ export function createWorldMaterials(
   const shoulder = makeMaterial(scene, namePrefix + '-shoulders', WORLD_COLORS.concrete, 0.03);
   const marking = makeMaterial(scene, namePrefix + '-road-marking', WORLD_COLORS.paint, 0.04);
   const facadeDetail = makeMaterial(scene, namePrefix + '-facade-decoration', '#c1c7c5', 0.075);
+  const treeBark = makeMaterial(scene, namePrefix + '-tree-bark', '#76523c', 0.025);
+  const treeFoliage = makeMaterial(scene, namePrefix + '-tree-leaves', '#3c6643', 0.025);
+  treeBark.specularColor = Color3.Black();
+  treeFoliage.specularColor = Color3.Black();
   const roofs = ['#a6593d', '#884b3a', '#636268'].map((hex, i) =>
     makeMaterial(scene, namePrefix + '-roof-' + i, hex, 0.035));
   const roofTexture = new DynamicTexture(namePrefix + '-roof-tiles',
@@ -131,9 +137,9 @@ export function createWorldMaterials(
   ];
   ground.diffuseTexture = textures[0];
   road.diffuseTexture = textures[1];
-  const materials = [ground, road, path, shoulder, marking, facadeDetail, ...roofs, ...walls];
+  const materials = [ground, road, path, shoulder, marking, facadeDetail, treeBark, treeFoliage, ...roofs, ...walls];
   return {
-    ground, road, path, shoulder, marking, facadeDetail, roofs, walls,
+    ground, road, path, shoulder, marking, facadeDetail, treeBark, treeFoliage, roofs, walls,
     dispose: () => {
       for (const material of materials) material.dispose();
       for (const texture of [...textures, roofTexture]) texture.dispose();

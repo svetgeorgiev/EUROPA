@@ -1,90 +1,110 @@
-import {
-  Color3, DynamicTexture, Mesh, MeshBuilder, Scene, StandardMaterial
-} from '@babylonjs/core';
+import { Matrix, Scene, Vector3 } from '@babylonjs/core';
 import { getCoverageReport, type LandmarkCoverage } from './buildingCoverage.ts';
 import type { WorldMap, Point2 } from './osm.ts';
 import type { NavigationData } from './navigation.ts';
 
 interface Marker {
   position: Point2;
-  mesh: Mesh;
-  material: StandardMaterial;
-  texture: DynamicTexture;
+  element: HTMLDivElement;
 }
 
 /**
- * Lightweight floating "mapped place" labels. A POI marker is NEVER a building
- * footprint or a solid collider. It represents the point in the OSM dataset.
+ * A screen-space overlay projected from the real OSM point, rather than a
+ * double-sided Babylon plane. Text stays upright and legible from EVERY
+ * viewing direction. The overlay is not world geometry or a collider.
  */
 export class PoiMarkers {
   private readonly markers: Marker[] = [];
+  private readonly layer: HTMLDivElement;
+  private readonly scene: Scene;
+  private readonly canvas: HTMLCanvasElement;
 
-  constructor(scene: Scene, map: WorldMap, nav: NavigationData) {
-    const entries = getCoverageReport(map, nav);
-    for (const entry of entries.slice(0, 45)) {
-      const label = this.makeMarker(scene, entry);
-      if (label) this.markers.push(label);
-    }
-  }
+  constructor(scene: Scene, canvas: HTMLCanvasElement, map: WorldMap, nav: NavigationData) {
+    this.scene = scene;
+    this.canvas = canvas;
+    const parent = canvas.parentElement;
+    if (!parent) throw new Error('Game canvas has no label overlay parent');
+    const layer = document.createElement('div');
+    layer.className = 'poi-marker-layer';
+    layer.setAttribute('aria-hidden', 'true');
+    // No click interception: pointer lock and the minimap remain usable.
+    layer.style.pointerEvents = 'none';
+    this.layer = layer;
+    parent.appendChild(layer);
 
-  private makeMarker(scene: Scene, entry: LandmarkCoverage): Marker | null {
-    const point = entry.landmark.point;
-    const mappedFootprint = entry.status !== 'no-nearby-footprint';
-    const label = entry.landmark.name;
-    const texture = new DynamicTexture('poi-label-' + entry.landmark.id,
-      { width: 512, height: 128 }, scene, false);
     try {
-      const ctx = texture.getContext();
-      ctx.fillStyle = mappedFootprint ? '#182b29' : '#3a2f20';
-      ctx.fillRect(0, 0, 512, 128);
-      ctx.strokeStyle = mappedFootprint ? '#779b86' : '#d6a960';
-      ctx.lineWidth = 5;
-      ctx.strokeRect(3, 3, 506, 122);
-      ctx.fillStyle = '#f4ead6';
-      ctx.font = 'bold 35px sans-serif';
-      const title = label.length > 24 ? label.slice(0, 23) + '…' : label;
-      ctx.fillText(title, 18, 53);
-      ctx.fillStyle = mappedFootprint ? '#aec7b2' : '#f4c87c';
-      ctx.font = '24px sans-serif';
-      ctx.fillText(mappedFootprint ? 'OSM LANDMARK · NEAR BUILDING'
-        : 'OSM POI · NO IMPORTED FOOTPRINT', 18, 94);
-      texture.update(false);
-      const material = new StandardMaterial('poi-material-' + entry.landmark.id, scene);
-      material.diffuseTexture = texture;
-      material.emissiveColor = Color3.White();
-      material.disableLighting = true;
-      material.backFaceCulling = false;
-      const mesh = MeshBuilder.CreatePlane('poi-' + entry.landmark.id,
-        { width: 5.0, height: 1.25 }, scene);
-      mesh.position.set(point.x, 3.6, point.z);
-      mesh.material = material;
-      mesh.billboardMode = Mesh.BILLBOARDMODE_ALL;
-      mesh.isPickable = false;
-      mesh.checkCollisions = false;
-      mesh.setEnabled(false);
-      return { position: point, mesh, material, texture };
+      for (const entry of getCoverageReport(map, nav).slice(0, 45)) {
+        const marker = this.makeMarker(entry);
+        layer.appendChild(marker.element);
+        this.markers.push(marker);
+      }
     } catch (error) {
-      console.warn('EUROPA: could not create optional POI label', error);
-      texture.dispose();
-      return null;
+      this.dispose();
+      throw error;
     }
   }
 
-  update(player: Point2, maxDistance = 110): void {
-    const maximumSquared = maxDistance * maxDistance;
+  private makeMarker(entry: LandmarkCoverage): Marker {
+    const mappedFootprint = entry.status !== 'no-nearby-footprint';
+    const element = document.createElement('div');
+    element.className = mappedFootprint ? 'poi-marker' : 'poi-marker poi-marker--no-footprint';
+    const title = document.createElement('strong');
+    // textContent avoids accidentally interpreting OSM user-provided names as HTML.
+    title.textContent = entry.landmark.name;
+    const caption = document.createElement('span');
+    caption.textContent = mappedFootprint
+      ? 'OSM LANDMARK · NEAR IMPORTED BUILDING'
+      : 'OSM POI · NO IMPORTED BUILDING OUTLINE';
+    element.append(title, caption);
+    element.hidden = true;
+    return { position: entry.landmark.point, element };
+  }
+
+  /** Run at most ~30 fps from the game loop, even at high render rates. */
+  update(player: Point2, maxDistance = 85): void {
+    const camera = this.scene.activeCamera;
+    if (!camera) return;
+    const engine = this.scene.getEngine();
+    const width = engine.getRenderWidth(), height = engine.getRenderHeight();
+    if (!width || !height || !this.canvas.clientWidth || !this.canvas.clientHeight) return;
+    const forward = camera.getForwardRay().direction;
+    const viewport = camera.viewport.toGlobal(width, height);
+    const cssX = this.canvas.clientWidth / width;
+    const cssY = this.canvas.clientHeight / height;
+    const maxSq = maxDistance * maxDistance;
+    let shown = 0;
     for (const marker of this.markers) {
-      const distance = (player.x - marker.position.x) ** 2 +
-        (player.z - marker.position.z) ** 2;
-      marker.mesh.setEnabled(distance < maximumSquared && distance > 4);
+      const dx = marker.position.x - player.x, dz = marker.position.z - player.z;
+      if (dx * dx + dz * dz > maxSq || dx * dx + dz * dz < 16 || shown >= 8) {
+        marker.element.hidden = true;
+        continue;
+      }
+      const point = new Vector3(marker.position.x, 4.0, marker.position.z);
+      if (Vector3.Dot(forward, point.subtract(camera.position)) <= 0.5) {
+        marker.element.hidden = true;
+        continue;
+      }
+      const result = Vector3.Project(point, Matrix.Identity(),
+        this.scene.getTransformMatrix(), viewport);
+      if (result.z < 0 || result.z > 1 || !Number.isFinite(result.x) || !Number.isFinite(result.y)) {
+        marker.element.hidden = true;
+        continue;
+      }
+      const x = result.x * cssX, y = result.y * cssY;
+      if (x < 48 || x > this.canvas.clientWidth - 48 ||
+          y < 72 || y > this.canvas.clientHeight - 65) {
+        marker.element.hidden = true;
+        continue;
+      }
+      marker.element.hidden = false;
+      marker.element.style.left = x.toFixed(1) + 'px';
+      marker.element.style.top = y.toFixed(1) + 'px';
+      shown++;
     }
   }
 
   dispose(): void {
-    for (const marker of this.markers) {
-      marker.mesh.dispose();
-      marker.material.dispose();
-      marker.texture.dispose();
-    }
+    this.layer.remove();
     this.markers.length = 0;
   }
 }

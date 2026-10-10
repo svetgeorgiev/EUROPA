@@ -207,3 +207,62 @@ test('safety gate blocks any duplicated source identity even when total footprin
   assert.equal(report.passedSafetyGate,false);
   assert.ok(report.reviewWarnings.some(line=>line.includes('multiple 3D footprints')));
 });
+
+
+test('real-shaped osmium simple one-ring MultiPolygon keeps its actual OSM way ID', () => {
+  const id=1016083252;
+  const ring=[at(10,10),at(30,10),at(30,30),at(10,30),at(10,10)];
+  const linear=feature('way',id,{building:'yes'},{
+    type:'LineString',coordinates:ring
+  });
+  const area=feature('way',id,{building:'yes'},{
+    type:'MultiPolygon',coordinates:[[ring]]
+  });
+  for (const features of [[street,linear,area],[street,area,linear]]) {
+    const n=normalize(features);
+    assert.equal(n.stats.duplicateLinearBuildingRepresentations,1);
+    assert.equal(n.stats.skippedComplexBuildingAreas,0);
+    const buildings=world(n).buildings;
+    assert.equal(buildings.length,1);
+    assert.equal(buildings[0].sourceId,'way/1016083252');
+  }
+});
+
+test('geometry inspection identifies both valid and boundary-rejected outlines', async () => {
+  const { inspectBuildingFootprint } = await import('../src/world/osmBuildingImports.ts');
+  const toLatLon=([lon,lat])=>({lon,lat});
+  const shape=(points)=>points.map(atPoint=>toLatLon(at(...atPoint)));
+  const inside=inspectBuildingFootprint(shape([
+    [10,10],[30,10],[30,30],[10,30],[10,10]
+  ]),anchor);
+  assert.equal(inside.status,'accepted');
+  assert.ok(inside.importedAreaMeters2>300);
+  const outside=inspectBuildingFootprint(shape([
+    [540,10],[555,10],[555,30],[540,30],[540,10]
+  ]),anchor);
+  assert.equal(outside.status,'outside-world');
+  const smallSliver=inspectBuildingFootprint(shape([
+    [499.99,10],[520,10],[520,30],[499.99,30],[499.99,10]
+  ]),anchor);
+  assert.equal(smallSliver.status,'clip-rejected');
+  assert.ok(smallSliver.sourceAreaMeters2>100);
+});
+
+test('read-only CLI inspector finds simple one-ring MultiPolygon without modifying map data', async () => {
+  const { inspectRecoveryBuilding } = await import('../scripts/inspect-recovery-building.mjs');
+  const id=1016083252;
+  const ring=[at(10,10),at(30,10),at(30,30),at(10,30),at(10,10)];
+  const input={type:'FeatureCollection',features:[
+    street,
+    feature('way',id,{building:'yes'},{type:'LineString',coordinates:ring}),
+    feature('way',id,{building:'yes'},{type:'MultiPolygon',coordinates:[[ring]]})
+  ]};
+  const messages=[];
+  const result=inspectRecoveryBuilding(input,'way/1016083252',{
+    info:s=>messages.push(s)
+  });
+  assert.deepEqual(result,{sourceId:'way/1016083252',
+    rawCount:2, normalizedCount:1, importedCount:1});
+  assert.ok(messages.some(s=>s.includes('Clipping status: accepted')));
+  assert.ok(messages.some(s=>s.includes('MultiPolygon, polygons=1')));
+});

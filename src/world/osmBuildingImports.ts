@@ -88,6 +88,44 @@ function clipToWorld(outline: Point2[]): Point2[] | null {
     return null;
   }
 }
+/**
+ * Uses exactly the same validation and clipping as the physical importer.
+ * Diagnostic-only: never alters the world or bypasses the 8m² safety limit.
+ */
+export function inspectBuildingFootprint(
+  geography: NodePosition[] | undefined, anchor: GeoAnchor
+): {
+  status: 'accepted' | 'invalid-coordinates' | 'open-ring' |
+    'outside-world' | 'clip-rejected';
+  sourceAreaMeters2: number | null;
+  importedAreaMeters2: number | null;
+  bounds: { minX: number; maxX: number; minZ: number; maxZ: number } | null;
+} {
+  const rejected = (status: 'invalid-coordinates' | 'open-ring') =>
+    ({ status, sourceAreaMeters2: null, importedAreaMeters2: null, bounds: null });
+  if (!validCoords(geography) || !geography) return rejected('invalid-coordinates');
+  if (!closed(geography)) return rejected('open-ring');
+  const points = toLocal(geography.slice(0, -1), anchor);
+  const bounds = {
+    minX: Math.min(...points.map(p => p.x)),
+    maxX: Math.max(...points.map(p => p.x)),
+    minZ: Math.min(...points.map(p => p.z)),
+    maxZ: Math.max(...points.map(p => p.z))
+  };
+  const sourceAreaMeters2 = area(points);
+  const clipped = clipToWorld(points);
+  if (clipped) {
+    return { status: 'accepted', sourceAreaMeters2,
+      importedAreaMeters2: area(clipped), bounds };
+  }
+  const whollyOutside = bounds.maxX < -LIMIT || bounds.minX > LIMIT ||
+    bounds.maxZ < -LIMIT || bounds.minZ > LIMIT;
+  return {
+    status: whollyOutside ? 'outside-world' : 'clip-rejected',
+    sourceAreaMeters2, importedAreaMeters2: null, bounds
+  };
+}
+
 function joinOuters(parts: NodePosition[][]): NodePosition[] | null {
   if (!parts.length || parts.length > 30) return null;
   const remaining = parts.map(p => [...p]);

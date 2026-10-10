@@ -111,3 +111,28 @@ The recovery converter now prescans polygon source IDs and suppresses each corre
 **Expected next preview:** around 129 uniquely sourced footprints if the reported source-ID differences were caused entirely by dual geometry export; this is a hypothesis until rerunning against the user's actual GeoJSON. The existing **one missing building source ID** is still an apply blocker and must be investigated. Do **not** run \`--apply\` on a rejected report or waive the gate to make the count bigger.
 
 OSM documentation: <https://docs.osmcode.org/osmium/latest/osmium-export.html> (see AREA HANDLING and default \`linear_tags\`/\`area_tags\` settings).
+
+
+## 2026-10-10 — Investigate one missing real building (read-only)
+
+The locally exported GeoJSON confirms that \`way/1016083252\` exists as
+**LineString (5 vertices) + MultiPolygon (one polygon, one ring)**.
+This is a valid, *simple* multipolygon structure, not a courtyard or
+multiple-building relation. The importer is already designed to accept it,
+so we must NOT weaken or bypass the area/clipping safety rules without
+finding the exact rejection reason.
+
+After pulling the latest EUROPA-002D.3 branch, run in **PowerShell**:
+
+\`\`\`powershell
+pnpm map:inspect --input "D:\OSM\nova-zagora-small.geojson" --id way/1016083252
+\`\`\`
+
+The read-only command inspects both raw GeoJSON representations, the
+deduplicated building candidate, and the actual 1km² footprint clipping
+routine. It prints area, map-relative extent and a reason if the
+footprint is not accepted. The Bulgaria extract includes an 80m buffer
+around the game; a structure wholly outside the gameplay boundary is
+correctly excluded. Existing OSM-derived map, chunks and navigation
+remain unchanged until explicit \`--apply\` following review.
+

@@ -1,0 +1,139 @@
+{
+  "schemaVersion": 1,
+  "location": "Nova Zagora, Bulgaria",
+  "source": "OpenStreetMap",
+  "attribution": "© OpenStreetMap contributors",
+  "licenseUrl": "https://www.openstreetmap.org/copyright",
+  "collectedAt": "unknown (offline OSM extract; check PBF timestamp)",
+  "anchor": {
+    "latitude": 42.493,
+    "longitude": 26.011,
+    "elevationMeters": 0
+  },
+  "halfSizeMeters": 500,
+  "tileSizeMeters": 250,
+  "origin": {
+    "x": -500,
+    "z": -500
+  },
+  "cols": 4,
+  "rows": 4,
+  "spawn": {
+    "x": 29.41819716243591,
+    "z": -2.3605108940230597
+  },
+  "chunks": [
+    {
+      "id": "0_0",
+      "col": 0,
+      "row": 0,
+      "roadCount": 30,
+      "buildingCount": 0
+    },
+    {
+      "id": "1_0",
+      "col": 1,
+      "row": 0,
+      "roadCount": 35,
+      "buildingCount": 0
+    },
+    {
+      "id": "2_0",
+      "col": 2,
+      "row": 0,
+      "roadCount": 28,
+      "buildingCount": 7
+    },
+    {
+      "id": "3_0",
+      "col": 3,
+      "row": 0,
+      "roadCount": 34,
+      "buildingCount": 75
+    },
+    {
+      "id": "0_1",
+      "col": 0,
+      "row": 1,
+      "roadCount": 29,
+      "buildingCount": 0
+    },
+    {
+      "id": "1_1",
+      "col": 1,
+      "row": 1,
+      "roadCount": 56,
+      "buildingCount": 0
+    },
+    {
+      "id": "2_1",
+      "col": 2,
+      "row": 1,
+      "roadCount": 54,
+      "buildingCount": 8
+    },
+    {
+      "id": "3_1",
+      "col": 3,
+      "row": 1,
+      "roadCount": 96,
+      "buildingCount": 17
+    },
+    {
+      "id": "0_2",
+      "col": 0,
+      "row": 2,
+      "roadCount": 32,
+      "buildingCount": 0
+    },
+    {
+      "id": "1_2",
+      "col": 1,
+      "row": 2,
+      "roadCount": 28,
+      "buildingCount": 4
+    },
+    {
+      "id": "2_2",
+      "col": 2,
+      "row": 2,
+      "roadCount": 22,
+      "buildingCount": 3
+    },
+    {
+      "id": "3_2",
+      "col": 3,
+      "row": 2,
+      "roadCount": 20,
+      "buildingCount": 5
+    },
+    {
+      "id": "0_3",
+      "col": 0,
+      "row": 3,
+      "roadCount": 18,
+      "buildingCount": 0
+    },
+    {
+      "id": "1_3",
+      "col": 1,
+      "row": 3,
+      "roadCount": 62,
+      "buildingCount": 8
+    },
+    {
+      "id": "2_3",
+      "col": 2,
+      "row": 3,
+      "roadCount": 36,
+      "buildingCount": 2
+    },
+    {
+      "id": "3_3",
+      "col": 3,
+      "row": 3,
+      "roadCount": 32,
+      "buildingCount": 0
+    }
+  ]
+}

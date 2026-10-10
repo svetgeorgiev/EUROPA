@@ -1,4 +1,6 @@
 import { AbandonedCar } from './AbandonedCar';
+import { FirstPersonGun } from './FirstPersonGun';
+import type { WeaponAmmo } from './weaponState';
 import { renderOSMWorld } from '../world/renderOSM';
 import { ChunkRenderer, type ChunkGeometry } from '../world/ChunkRenderer';
 import { ChunkStreamer, type ChunkStreamStats } from '../world/ChunkStreamer';
@@ -25,6 +27,7 @@ export interface GameCallbacks {
   onVehicleStatus: (message: string) => void;
   onVehicleLocation: (position: Point2 | null) => void;
   onInteractionHint: (hint: string) => void;
+  onWeaponState: (state: WeaponAmmo) => void;
 }
 
 const WALK_SPEED = 4.5;
@@ -67,6 +70,7 @@ export class EuropaGame {
   private poiFrameSeconds = 0;
   private worldReady = false;
   private abandonedCar: AbandonedCar | null = null;
+  private weapon: FirstPersonGun | null = null;
   private lastInteractionHint = '';
 
   constructor(private readonly canvas: HTMLCanvasElement, callbacks: GameCallbacks) {
@@ -108,6 +112,7 @@ export class EuropaGame {
     window.addEventListener('resize', this.onResize);
     document.addEventListener('pointerlockchange', this.onPointerLockChange);
     document.addEventListener('mousemove', this.onMouseMove);
+    this.canvas.addEventListener('pointerdown', this.onPointerDown);
     this.engine.runRenderLoop(this.tick);
     this.publishStats();
   }
@@ -361,6 +366,11 @@ export class EuropaGame {
 
   private initVehicle(): void {
     if (this.disposed || this.abandonedCar) return;
+    // Create the gun only after test-world meshes have been replaced by the OSM world.
+    // This also restores a previously recovered weapon from localStorage.
+    this.weapon ??= new FirstPersonGun(
+      this.scene, this.camera, this.callbacks.onWeaponState, this.callbacks.onVehicleStatus
+    );
     // Initial placement near СУ Иван Вазов, not a surveyed parking bay.
     // Avoid OSM building footprint collisions before spawning.
     const safe = this.buildingCollisions.findSafePosition(
@@ -370,7 +380,9 @@ export class EuropaGame {
       this.callbacks.onVehicleStatus('No safe location for prototype vehicle');
       return;
     }
-    const vehicle = new AbandonedCar(this.scene, this.callbacks.onVehicleStatus);
+    const vehicle = new AbandonedCar(
+      this.scene, this.callbacks.onVehicleStatus, () => !this.weapon?.hasGun
+    );
     this.abandonedCar = vehicle;
     this.callbacks.onVehicleLocation(safe);
     void vehicle.load(safe.x, safe.z);
@@ -437,7 +449,13 @@ export class EuropaGame {
     }
     if (event.code === 'KeyE' && !event.repeat && document.pointerLockElement === this.canvas) {
       event.preventDefault();
-      this.abandonedCar?.interact(this.camera.position, this.yaw);
+      const result = this.abandonedCar?.interact(this.camera.position, this.yaw);
+      if (result === 'gun') this.weapon?.pickUp();
+      return;
+    }
+    if (event.code === 'KeyF' && !event.repeat && document.pointerLockElement === this.canvas) {
+      event.preventDefault();
+      this.weapon?.reload();
       return;
     }
     if (event.code === 'KeyR' && !event.repeat) {
@@ -460,6 +478,11 @@ export class EuropaGame {
     this.callbacks.onLockChange(document.pointerLockElement === this.canvas);
     if (document.pointerLockElement !== this.canvas) this.keys.clear();
   };
+  private onPointerDown = (event: PointerEvent): void => {
+    if (event.button !== 0 || document.pointerLockElement !== this.canvas) return;
+    event.preventDefault();
+    this.weapon?.fire();
+  };
   private onMouseMove = (event: MouseEvent): void => {
     if (document.pointerLockElement !== this.canvas) return;
     const sensitivity = 0.002;
@@ -481,6 +504,7 @@ export class EuropaGame {
       const playing = document.pointerLockElement === this.canvas;
       if (playing) this.updateMovement(dt);
       this.updateChunkStreaming();
+      this.weapon?.update(dt);
       const hint = playing ? (this.abandonedCar?.interactionLabel(this.camera.position, this.yaw) ?? '') : '';
       if (hint !== this.lastInteractionHint) {
         this.lastInteractionHint = hint;
@@ -594,6 +618,8 @@ export class EuropaGame {
     this.streamAbort.abort();
     this.abandonedCar?.dispose();
     this.abandonedCar = null;
+    this.weapon?.dispose();
+    this.weapon = null;
     this.poiMarkers?.dispose();
     this.poiMarkers = null;
     this.campusGrounds?.dispose();
@@ -612,6 +638,7 @@ export class EuropaGame {
     window.removeEventListener('resize', this.onResize);
     document.removeEventListener('pointerlockchange', this.onPointerLockChange);
     document.removeEventListener('mousemove', this.onMouseMove);
+    this.canvas.removeEventListener('pointerdown', this.onPointerDown);
     this.engine.stopRenderLoop(this.tick);
     this.scene.dispose();
     this.engine.dispose();

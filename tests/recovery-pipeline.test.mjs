@@ -131,3 +131,24 @@ test('bad input fails before any data is overwritten', async () => {
     assert.equal(await readFile(join(fix.worldDir,'map.json'),'utf8'),old);
   } finally {await rm(fix.root,{recursive:true,force:true});}
 });
+
+
+test('integration: osmium dual area+line export yields real 2 building IDs, not 4 meshes', async () => {
+  const fix=await makeFixture();
+  try {
+    const asLine = building => feature('way',
+      building.properties['@id'],{ building: building.properties.building },{
+      type:'LineString',coordinates:building.geometry.coordinates[0]
+    });
+    const dual=raw([street,asLine(baselineBuilding),baselineBuilding,
+      asLine(addedBuilding),addedBuilding,poi,named]);
+    await writeFile(fix.inputPath,JSON.stringify(dual));
+    const report=await previewBuildingRecovery(fix);
+    assert.equal(report.candidate.buildingCount,2);
+    assert.equal(report.candidate.uniqueBuildingCount,2);
+    assert.equal(report.candidate.duplicateBuildingSources.length,0);
+    assert.equal(report.importStats.duplicateLinearBuildingRepresentations,2);
+    assert.deepEqual(report.newBuildingSources,['way/102']);
+    assert.equal(report.passedSafetyGate,true);
+  } finally { await rm(fix.root,{recursive:true,force:true}); }
+});

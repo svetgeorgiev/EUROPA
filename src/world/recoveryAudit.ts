@@ -25,6 +25,9 @@ export interface LandmarkAudit {
 }
 export interface RecoveryAudit {
   buildingCount: number;
+  /** A single OSM building source must contribute exactly one footprint. */
+  uniqueBuildingCount: number;
+  duplicateBuildingSources: string[];
   roadsCount: number;
   namedStreets: number;
   namedLandmarks: number;
@@ -40,6 +43,9 @@ function siteMatchesKind(landmark: Landmark, site: RecoverySite): boolean {
 }
 function nameComparable(name: string): string {
   return name.toLocaleLowerCase('bg').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+}
+function buildingSourceId(building: BuildingFootprint): string {
+  return building.sourceId ?? 'way/' + building.id;
 }
 function centre(building: BuildingFootprint): Point2 {
   const x = building.outline.reduce((sum, point) => sum + point.x, 0);
@@ -88,6 +94,13 @@ export function auditLandmarks(
         (verifiedBuilding ? 'way/' + verifiedBuilding.id : null)
     };
   });
+  const sourceCounts = new Map<string, number>();
+  for (const building of map.buildings) {
+    const sourceId = buildingSourceId(building);
+    sourceCounts.set(sourceId, (sourceCounts.get(sourceId) ?? 0) + 1);
+  }
+  const duplicateBuildingSources = [...sourceCounts].filter(([, count]) => count > 1)
+    .map(([sourceId]) => sourceId).sort();
   const countByGeometry: RecoveryAudit['countByGeometry'] = {
     'inside-imported-building': landmarks.filter(x => x.geometry === 'inside-imported-building').length,
     'near-imported-building': landmarks.filter(x => x.geometry === 'near-imported-building').length,
@@ -95,6 +108,8 @@ export function auditLandmarks(
   };
   return {
     buildingCount: map.buildings.length,
+    uniqueBuildingCount: sourceCounts.size,
+    duplicateBuildingSources,
     roadsCount: map.roads.length,
     namedStreets: navigation.streets.length,
     namedLandmarks: navigation.landmarks.length,
@@ -140,6 +155,10 @@ export function compareRecovery(
   if (candidateNavigation.landmarks.length < oldNavigation.landmarks.length * 0.75) {
     reviewWarnings.push('Named public landmarks dropped more than 25%.');
   }
+  if (candidate.duplicateBuildingSources.length > 0) {
+    reviewWarnings.push(candidate.duplicateBuildingSources.length +
+      ' OSM building IDs generate multiple 3D footprints; apply blocked.');
+  }
   if (missingBuildingSources.length > 0) {
     reviewWarnings.push(missingBuildingSources.length +
       ' previously imported OSM building source IDs are no longer in candidate data.');
@@ -150,7 +169,9 @@ export function compareRecovery(
     addedBuildingCount: candidateMap.buildings.length - oldMap.buildings.length,
     addedCampusSites: sites.length,
     reviewWarnings,
-    passedSafetyGate: candidateMap.buildings.length >= oldMap.buildings.length &&
+    passedSafetyGate: candidate.duplicateBuildingSources.length === 0 &&
+      candidateMap.buildings.length === candidate.uniqueBuildingCount &&
+      candidateMap.buildings.length >= oldMap.buildings.length &&
       candidateMap.roads.length >= oldMap.roads.length * 0.9 &&
       candidateNavigation.streets.length >= oldNavigation.streets.length * 0.75 &&
       candidateNavigation.landmarks.length >= oldNavigation.landmarks.length * 0.75 &&

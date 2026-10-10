@@ -126,3 +126,20 @@ test('site geometry holes exclude their courtyard interiors from school evidence
   assert.equal(insideSite({x:15,z:15},d.sites[0]),true);
   assert.equal(world(d).buildings.length,0);
 });
+
+
+test('school campus way keeps its area centroid when osmium also exports a LineString', () => {
+  const linearCampus=feature('way',301,{amenity:'school',name:'СУ Иван Вазов'},{
+    type:'LineString',coordinates:campus.geometry.coordinates[0]
+  });
+  for (const features of [[street,linearCampus,campus],
+                          [street,campus,linearCampus]]) {
+    const data=normalize(features);
+    const landmarks=navigation(data).landmarks.filter(poi=>poi.id==='way/301');
+    assert.equal(landmarks.length,1);
+    assert.ok(Math.abs(landmarks[0].point.x-25)<0.3);
+    assert.ok(Math.abs(landmarks[0].point.z-25)<0.3);
+    assert.equal(data.sites.length,1,'campus area is preserved once');
+    assert.equal(world(data).buildings.length,0,'campus is not a physical building');
+  }
+});

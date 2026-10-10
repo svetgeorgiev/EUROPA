@@ -178,8 +178,18 @@ export async function previewBuildingRecovery({
   };
   await writeJSON(reportPath, report);
   logger.info('EUROPA building recovery PREVIEW (world data not modified yet).');
-  logger.info('Buildings: ' + report.before.buildingCount + ' → ' + report.candidate.buildingCount +
-    '; verified new IDs: ' + report.newBuildingSources.length);
+  logger.info('Building footprints: ' + report.before.buildingCount + ' → ' +
+    report.candidate.buildingCount);
+  logger.info('Unique OSM building source IDs: ' + report.before.uniqueBuildingCount +
+    ' → ' + report.candidate.uniqueBuildingCount);
+  logger.info('Duplicate 3D building IDs remaining: ' +
+    report.candidate.duplicateBuildingSources.length);
+  logger.info('Osmium duplicated line/area representations removed: ' +
+    (report.importStats.duplicateLinearBuildingRepresentations ?? 0));
+  logger.info('New actual OSM building IDs (' + report.newBuildingSources.length + '): ' +
+    (report.newBuildingSources.join(', ') || 'none'));
+  logger.info('Existing building IDs missing (' + report.missingBuildingSources.length + '): ' +
+    (report.missingBuildingSources.join(', ') || 'none'));
   logger.info('Road segments: ' + report.before.roadsCount + ' → ' + report.candidate.roadsCount);
   logger.info('Named POIs: ' + report.before.namedLandmarks + ' → ' + report.candidate.namedLandmarks);
   logger.info('Landmarks inside building: ' + report.before.countByGeometry['inside-imported-building'] +
@@ -191,9 +201,12 @@ export async function previewBuildingRecovery({
     logger.info(poi.name + ': ' + poi.geometry +
       (poi.nearestBuildingSource ? ', nearest ' + poi.nearestBuildingSource +
         ' (' + poi.distanceMeters + 'm)' : '') +
-      (poi.sites.length ? ', site polygons=' + poi.sites.length : ''));
+      (poi.sites.length ? ', site polygons=' + poi.sites.length +
+        ', buildings inside mapped site=' + poi.sites.reduce((total, site) =>
+          total + site.campusBuildingIds.length, 0) : ''));
   }
   for (const warning of report.reviewWarnings) logger.warn('REVIEW: ' + warning);
+  logger.info('Safety gate: ' + (report.passedSafetyGate ? 'PASS' : 'BLOCKED'));
   logger.info('Preview report: ' + resolve(reportPath));
   if (!apply) {
     logger.info('No files were changed. Review first; use --apply only after quality gates pass.');

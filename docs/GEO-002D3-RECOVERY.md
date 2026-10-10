@@ -100,3 +100,14 @@ pnpm dev
 - Check FPS near dense streets and camera-oriented signs.
 
 ODbL: © OpenStreetMap contributors — <https://www.openstreetmap.org/copyright>. Game source GPL-3.0. Do not upload generated ODbL world files into the GPL-only Git tree.
+
+
+## 2026-10-10: real osmium preview — duplicate-geometry safeguard
+
+The first real GeoJSON preview printed **127 → 258 building entries**, but just **3 new OSM building IDs** and **1 missing old ID**. This was *not* 131 newly mapped buildings. By default, osmium's export config sets both \`linear_tags=true\` and \`area_tags=true\`. A closed OSM way can consequently be exported as **both** a LineString and a Polygon under exactly the same \`@type=way, @id\`. Importing both as footprints produces coincident meshes and redundant collision obstacles.
+
+The recovery converter now prescans polygon source IDs and suppresses each corresponding redundant linear representation. Named school/civic site boundaries also use the polygon for their POI centroid. Real mapped highway lines are retained separately when an area feature has the same identity. Preview output includes both **number of footprint entries** and **unique building source IDs**, the number of suppressed duplicate linear building representations, and lists new/missing OSM source IDs. The apply safety gate rejects any residual duplicate 3D building source IDs.
+
+**Expected next preview:** around 129 uniquely sourced footprints if the reported source-ID differences were caused entirely by dual geometry export; this is a hypothesis until rerunning against the user's actual GeoJSON. The existing **one missing building source ID** is still an apply blocker and must be investigated. Do **not** run \`--apply\` on a rejected report or waive the gate to make the count bigger.
+
+OSM documentation: <https://docs.osmcode.org/osmium/latest/osmium-export.html> (see AREA HANDLING and default \`linear_tags\`/\`area_tags\` settings).

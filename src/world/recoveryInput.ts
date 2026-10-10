@@ -27,6 +27,8 @@ export interface RecoveryInputStats {
   rejectedUnidentified: number;
   skippedComplexBuildingAreas: number;
   namedSites: number;
+  /** Osmium normally emits both a line and an area for a closed tagged way. */
+  duplicateLinearBuildingRepresentations: number;
 }
 export interface RecoveryInput {
   elements: SourceFeature[];
@@ -119,8 +121,22 @@ export function normalizeOsmiumGeoJSON(input: unknown, anchor: GeoAnchor): Recov
   const sites: RecoverySite[] = [];
   const stats: RecoveryInputStats = {
     features: raw.features.length, acceptedElements: 0,
-    rejectedUnidentified: 0, skippedComplexBuildingAreas: 0, namedSites: 0
+    rejectedUnidentified: 0, skippedComplexBuildingAreas: 0, namedSites: 0,
+    duplicateLinearBuildingRepresentations: 0
   };
+  // Osmium defaults to area_tags=true AND linear_tags=true and exports
+  // closed ways twice, including named school/civic polygons without a
+  // building tag. Prefer every Polygon over the redundant LineString by
+  // stable original OSM ID. Scan before processing: order is not guaranteed.
+  const polygonAreaWayIds = new Set<string>();
+  for (const feature of raw.features) {
+    if (!feature || feature.type !== 'Feature' ||
+        !['Polygon', 'MultiPolygon'].includes(feature.geometry?.type ?? '')) continue;
+    const identity = parseOsmIdentity(feature);
+    if (identity?.type === 'way') {
+      polygonAreaWayIds.add('way/' + identity.id);
+    }
+  }
   const known = new Set<string>();
   for (const feature of raw.features) {
     if (!feature || feature.type !== 'Feature' || !feature.geometry) continue;
@@ -144,7 +160,26 @@ export function normalizeOsmiumGeoJSON(input: unknown, anchor: GeoAnchor): Recov
     }
     if (geometry.type === 'LineString' && type === 'way') {
       const coords = line(geometry.coordinates);
-      if (coords) add({ type, id, tags, geometry: latlon(coords) });
+      if (coords) {
+        // A closed way is BOTH an area and a line in default osmium output.
+        // The polygon owns building geometry AND polygon POI label position.
+        // Keep the linear counterpart only if it also carries an actual
+        // highway: otherwise it duplicates the same OSM feature and risks
+        // generating an incorrect POI label from the outline's first edge.
+        if (polygonAreaWayIds.has(sourceId)) {
+          if (tags.building && tags.building !== 'no') {
+            stats.duplicateLinearBuildingRepresentations++;
+          }
+          if (!tags.highway) continue;
+          const linearTags: Tags = { highway: tags.highway };
+          for (const nameTag of ['name', 'name:bg', 'name:en']) {
+            if (tags[nameTag]) linearTags[nameTag] = tags[nameTag];
+          }
+          add({ type, id, tags: linearTags, geometry: latlon(coords) });
+        } else {
+          add({ type, id, tags, geometry: latlon(coords) });
+        }
+      }
       continue;
     }
     if (!['Polygon', 'MultiPolygon'].includes(geometry.type) ||

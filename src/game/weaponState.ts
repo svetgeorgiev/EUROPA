@@ -39,3 +39,19 @@ export function reloadWeapon(state: WeaponAmmo): { next: WeaponAmmo; added: numb
   const added = Math.min(MAGAZINE_SIZE - state.loaded, state.reserve);
   return { next: { ...state, loaded: state.loaded + added, reserve: state.reserve - added }, added };
 }
+/**
+ * Spare ammunition recovered from a test supply cache.
+ * Deliberately capped to avoid unbounded local save values.
+ */
+export function addReserveAmmunition(
+  state: WeaponAmmo, rounds: number, maxReserve = 96
+): { next: WeaponAmmo; added: number } {
+  if (!state.owned || !Number.isInteger(rounds) || rounds <= 0) {
+    return { next: { ...state }, added: 0 };
+  }
+  const added = Math.min(rounds, Math.max(0, maxReserve - state.reserve));
+  return {
+    next: { ...state, reserve: state.reserve + added },
+    added
+  };
+}

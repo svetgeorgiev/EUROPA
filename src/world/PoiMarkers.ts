@@ -2,6 +2,10 @@ import { Matrix, Scene, Vector3 } from '@babylonjs/core';
 import { getCoverageReport, type LandmarkCoverage } from './buildingCoverage.ts';
 import type { WorldMap, Point2 } from './osm.ts';
 import type { NavigationData } from './navigation.ts';
+import {
+  mappedBuildingsOnCampus, mappedSchoolForLandmark,
+  type CampusSiteData
+} from './CampusSites.ts';
 
 interface Marker {
   position: Point2;
@@ -19,7 +23,10 @@ export class PoiMarkers {
   private readonly scene: Scene;
   private readonly canvas: HTMLCanvasElement;
 
-  constructor(scene: Scene, canvas: HTMLCanvasElement, map: WorldMap, nav: NavigationData) {
+  constructor(
+    scene: Scene, canvas: HTMLCanvasElement, map: WorldMap,
+    nav: NavigationData, sites: CampusSiteData | null = null
+  ) {
     this.scene = scene;
     this.canvas = canvas;
     const parent = canvas.parentElement;
@@ -34,7 +41,7 @@ export class PoiMarkers {
 
     try {
       for (const entry of getCoverageReport(map, nav).slice(0, 45)) {
-        const marker = this.makeMarker(entry);
+        const marker = this.makeMarker(entry, map, sites);
         layer.appendChild(marker.element);
         this.markers.push(marker);
       }
@@ -44,17 +51,26 @@ export class PoiMarkers {
     }
   }
 
-  private makeMarker(entry: LandmarkCoverage): Marker {
+  private makeMarker(
+    entry: LandmarkCoverage, map: WorldMap, sites: CampusSiteData | null
+  ): Marker {
     const mappedFootprint = entry.status !== 'no-nearby-footprint';
+    const school = sites ? mappedSchoolForLandmark(entry.landmark, sites.sites) : null;
+    const campusBuildingCount = school
+      ? mappedBuildingsOnCampus(school, map.buildings).length : 0;
     const element = document.createElement('div');
-    element.className = mappedFootprint ? 'poi-marker' : 'poi-marker poi-marker--no-footprint';
+    element.className = school ? 'poi-marker poi-marker--campus'
+      : mappedFootprint ? 'poi-marker' : 'poi-marker poi-marker--no-footprint';
     const title = document.createElement('strong');
     // textContent avoids accidentally interpreting OSM user-provided names as HTML.
     title.textContent = entry.landmark.name;
     const caption = document.createElement('span');
-    caption.textContent = mappedFootprint
-      ? 'OSM LANDMARK · NEAR IMPORTED BUILDING'
-      : 'OSM POI · NO IMPORTED BUILDING OUTLINE';
+    caption.textContent = school
+      ? 'MAPPED SCHOOL GROUNDS · ' + campusBuildingCount +
+        (campusBuildingCount === 1 ? ' BUILDING IN SITE' : ' BUILDINGS IN SITE')
+      : mappedFootprint
+        ? 'OSM LANDMARK · NEAR IMPORTED BUILDING'
+        : 'OSM POI · NO IMPORTED BUILDING OUTLINE';
     element.append(title, caption);
     element.hidden = true;
     return { position: entry.landmark.point, element };

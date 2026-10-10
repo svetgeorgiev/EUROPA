@@ -18,3 +18,9 @@
 .poi-marker--no-footprint{border-color:#d6a960;background:#372c1cee}
 .poi-marker--no-footprint span{color:#e9b969}
 .poi-marker[hidden]{display:none}
+
+/* EUROPA-002D.3B: school-campus labels indicate mapped SITE membership,
+   not confirmed entrances, building functions or fences. */
+.poi-marker--campus{border-color:#d2c68d;background:#21342fee;box-shadow:0 3px 18px #0009,0 0 0 1px #85996a44}
+.poi-marker--campus strong{color:#fff1cb}
+.poi-marker--campus span{color:#d4e4af}

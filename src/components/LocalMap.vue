@@ -2,10 +2,12 @@
 import { computed, onMounted, ref, watch } from 'vue';
 import type { WorldMap } from '../world/osm';
 import { nearestNamedStreet, type NavigationData } from '../world/navigation';
+import { isSchoolSite, type CampusSiteData } from '../world/CampusSites';
 
 const props = defineProps<{
   map: WorldMap;
   navigation?: NavigationData | null;
+  sites?: CampusSiteData | null;
   x: number;
   z: number;
   yaw: number;
@@ -57,6 +59,27 @@ function draw(): void {
     ctx.beginPath();
     ctx.moveTo(0, screenY);
     ctx.lineTo(n, screenY);
+    ctx.stroke();
+  }
+
+  // School-campus outlines are OSM site *areas*, not fences or surveyed
+  // entrances. Draw the site tint underneath mapped roads and buildings.
+  for (const site of props.sites?.sites ?? []) {
+    if (!isSchoolSite(site)) continue;
+    ctx.beginPath();
+    for (const ring of [site.outline, ...site.holes]) {
+      if (ring.length < 3) continue;
+      ring.forEach((point, i) => {
+        const [px, py] = project(point.x, point.z);
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      });
+      ctx.closePath();
+    }
+    ctx.fillStyle = 'rgba(143,167,107,0.22)';
+    ctx.fill('evenodd');
+    ctx.strokeStyle = '#b7c58c';
+    ctx.lineWidth = 1.25;
     ctx.stroke();
   }
 
@@ -180,7 +203,7 @@ function draw(): void {
 onMounted(draw);
 watch([
   () => props.x, () => props.z, () => props.yaw, () => props.map,
-  () => props.navigation, () => props.overview
+  () => props.navigation, () => props.sites, () => props.overview
 ], draw, { flush: 'post' });
 </script>
 
@@ -194,7 +217,7 @@ watch([
     <canvas ref="canvas" :width="size" :height="size"
       role="img" aria-label="OpenStreetMap streets, building outlines, north indicator and player arrow" />
     <div v-if="navigation" class="local-map__metadata">
-      <span>{{ navigation.streets.length }} named ways · {{ navigation.landmarks.length }} landmarks</span>
+      <span>{{ navigation.streets.length }} named ways · {{ navigation.landmarks.length }} landmarks<span v-if="sites"> · {{ sites.sites.filter(isSchoolSite).length }} mapped school sites</span></span>
       <span v-if="nearbyStreet" :title="'Approximate nearest mapped label: ' + nearbyStreet.name">NEAR: {{ nearbyStreet.name }}</span>
     </div>
     <div v-else class="local-map__metadata local-map__metadata--empty">Names not imported yet · run map:nav</div>

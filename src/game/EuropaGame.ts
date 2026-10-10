@@ -5,6 +5,8 @@ import { chunkAt, chunkId, isChunkManifest, type ChunkManifest, type ChunkFile }
 import { isWorldMap, type Point2 } from '../world/osm';
 import { BuildingCollisionField } from '../world/buildingCollisions';
 import { PoiMarkers } from '../world/PoiMarkers';
+import { CampusGrounds } from '../world/CampusGrounds';
+import type { CampusSiteData } from '../world/CampusSites';
 import type { WorldMap } from '../world/osm';
 import type { NavigationData } from '../world/navigation';
 import {
@@ -57,6 +59,7 @@ export class EuropaGame {
   // Last known non-overlapping ground position. Also powers the R unstuck key.
   private lastSafePosition: Point2 = { x: 0, z: -7 };
   private poiMarkers: PoiMarkers | null = null;
+  private campusGrounds: CampusGrounds | null = null;
   private poiFrameSeconds = 0;
   private worldReady = false;
 
@@ -437,11 +440,15 @@ export class EuropaGame {
   };
 
   /** Labels are advisory metadata; OSM building footprints remain authoritative. */
-  setPoiData(worldMap: WorldMap, nav: NavigationData): void {
+  setPoiData(worldMap: WorldMap, nav: NavigationData, sites: CampusSiteData | null = null): void {
     if (this.disposed || !this.worldReady) return;
     try {
       this.poiMarkers?.dispose();
-      this.poiMarkers = new PoiMarkers(this.scene, this.canvas, worldMap, nav);
+      this.poiMarkers = null;
+      this.campusGrounds?.dispose();
+      this.campusGrounds = null;
+      if (sites) this.campusGrounds = new CampusGrounds(this.scene, sites);
+      this.poiMarkers = new PoiMarkers(this.scene, this.canvas, worldMap, nav, sites);
       this.poiMarkers.update({ x: this.camera.position.x, z: this.camera.position.z });
     } catch (error) {
       console.warn('EUROPA: optional landmark labels unavailable', error);
@@ -519,6 +526,8 @@ export class EuropaGame {
     this.streamAbort.abort();
     this.poiMarkers?.dispose();
     this.poiMarkers = null;
+    this.campusGrounds?.dispose();
+    this.campusGrounds = null;
     this.buildingCollisions.clear();
     this.streamer?.dispose();
     this.streamer = null;

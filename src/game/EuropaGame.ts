@@ -1,5 +1,8 @@
 import { AbandonedCar } from './AbandonedCar';
 import { FirstPersonGun } from './FirstPersonGun';
+import { CharacterAvatar } from './CharacterAvatar';
+import { DamageableTargets } from './DamageableTargets';
+import { stepPlanarMotion, type PlanarMotion } from './motionPhysics';
 import type { WeaponAmmo } from './weaponState';
 import { renderOSMWorld } from '../world/renderOSM';
 import { ChunkRenderer, type ChunkGeometry } from '../world/ChunkRenderer';
@@ -28,10 +31,10 @@ export interface GameCallbacks {
   onVehicleLocation: (position: Point2 | null) => void;
   onInteractionHint: (hint: string) => void;
   onWeaponState: (state: WeaponAmmo) => void;
+  onCameraMode: (mode: 'first' | 'third') => void;
 }
 
 const WALK_SPEED = 4.5;
-const SPRINT_SPEED = 7.5;
 const JUMP_SPEED = 6.0;
 const GRAVITY = -18;
 const EYE_HEIGHT = 1.65;
@@ -71,6 +74,12 @@ export class EuropaGame {
   private worldReady = false;
   private abandonedCar: AbandonedCar | null = null;
   private weapon: FirstPersonGun | null = null;
+  private avatar: CharacterAvatar | null = null;
+  private damageable: DamageableTargets | null = null;
+  private cameraMode: 'first' | 'third' = 'first';
+  private planarVelocity: PlanarMotion = { x: 0, z: 0 };
+  private movingSpeed = 0;
+  private sprinting = false;
   private lastInteractionHint = '';
 
   constructor(private readonly canvas: HTMLCanvasElement, callbacks: GameCallbacks) {
@@ -315,11 +324,11 @@ export class EuropaGame {
 
   private updateChunkStreaming(): void {
     if (!this.streamActive || !this.streamer || !this.chunkManifest) return;
-    const tile = chunkAt({ x: this.camera.position.x, z: this.camera.position.z }, this.chunkManifest);
+    const tile = chunkAt({ x: this.playerCollider.position.x, z: this.playerCollider.position.z }, this.chunkManifest);
     const id = tile ? chunkId(tile.col, tile.row) : '';
     if (!id || id === this.lastStreamTile) return;
     this.lastStreamTile = id;
-    void this.streamer.moveTo({ x: this.camera.position.x, z: this.camera.position.z });
+    void this.streamer.moveTo({ x: this.playerCollider.position.x, z: this.playerCollider.position.z });
   }
 
   /**
@@ -366,10 +375,14 @@ export class EuropaGame {
 
   private initVehicle(): void {
     if (this.disposed || this.abandonedCar) return;
+    // Visual character is optional; existing invisible physics collider remains authoritative.
+    this.avatar ??= new CharacterAvatar(this.scene, this.callbacks.onVehicleStatus);
+    this.damageable ??= new DamageableTargets(this.scene, this.callbacks.onVehicleStatus);
     // Create the gun only after test-world meshes have been replaced by the OSM world.
     // This also restores a previously recovered weapon from localStorage.
     this.weapon ??= new FirstPersonGun(
-      this.scene, this.camera, this.callbacks.onWeaponState, this.callbacks.onVehicleStatus
+      this.scene, this.camera, this.callbacks.onWeaponState, this.callbacks.onVehicleStatus,
+      (mesh, point, direction) => { this.damageable?.hit(mesh, point, direction); }
     );
     // Initial placement near СУ Иван Вазов, not a surveyed parking bay.
     // Avoid OSM building footprint collisions before spawning.
@@ -385,6 +398,8 @@ export class EuropaGame {
     );
     this.abandonedCar = vehicle;
     this.callbacks.onVehicleLocation(safe);
+    // Non-geographic wooden test targets deliberately live outside OSM source tiles.
+    this.damageable.spawnNear(safe, point => this.buildingCollisions.isBlocked(point, 2));
     void vehicle.load(safe.x, safe.z);
   }
 
@@ -416,11 +431,32 @@ export class EuropaGame {
     this.publishStats();
   }
 
+  private updateViewCamera(): void {
+    const p = this.playerCollider.position;
+    const eye = p.y + EYE_HEIGHT - PLAYER_HEIGHT / 2;
+    if (this.cameraMode === 'first') {
+      this.camera.position.set(p.x, eye, p.z);
+    } else {
+      const back = new Vector3(-Math.sin(this.yaw), 0, -Math.cos(this.yaw));
+      const from = new Vector3(p.x, eye, p.z);
+      // Third-person inspection camera; stop in front of mapped collision meshes.
+      const desiredDistance = 4.0;
+      const ray = new Ray(from, back, desiredDistance);
+      const obstruction = this.scene.pickWithRay(ray,
+        mesh => mesh.checkCollisions && mesh.isVisible && mesh !== this.playerCollider
+      );
+      const distance = obstruction?.hit ? Math.max(0.5, (obstruction.distance ?? desiredDistance) - 0.2) : desiredDistance;
+      this.camera.position.copyFrom(from.add(back.scale(distance)));
+      this.camera.position.y += 1.15;
+    }
+    this.camera.rotation.set(this.pitch * (this.cameraMode === 'third' ? 0.6 : 1), this.yaw, 0);
+  }
+
   private teleportPlayer(position: Point2): void {
     this.playerCollider.position.set(position.x, PLAYER_HEIGHT / 2 + 0.03, position.z);
-    this.camera.position.copyFrom(this.playerCollider.position);
-    this.camera.position.y += EYE_HEIGHT - PLAYER_HEIGHT / 2;
+    this.updateViewCamera();
     this.verticalVelocity = 0;
+    this.planarVelocity = { x: 0, z: 0 };
     this.grounded = false;
     this.lastSafePosition = { ...position };
     this.publishStats();
@@ -442,6 +478,14 @@ export class EuropaGame {
   }
 
   private onKeyDown = (event: KeyboardEvent): void => {
+    if (event.code === 'KeyC' && !event.repeat && document.pointerLockElement === this.canvas) {
+      event.preventDefault();
+      this.cameraMode = this.cameraMode === 'first' ? 'third' : 'first';
+      this.weapon?.setViewModelVisible(this.cameraMode === 'first');
+      this.callbacks.onCameraMode(this.cameraMode);
+      this.updateViewCamera();
+      return;
+    }
     if (event.code === 'KeyV' && !event.repeat && document.pointerLockElement === this.canvas) {
       event.preventDefault();
       this.visitVehicle();
@@ -449,7 +493,8 @@ export class EuropaGame {
     }
     if (event.code === 'KeyE' && !event.repeat && document.pointerLockElement === this.canvas) {
       event.preventDefault();
-      const result = this.abandonedCar?.interact(this.camera.position, this.yaw);
+      const p = this.playerCollider.position;
+      const result = this.abandonedCar?.interact(new Vector3(p.x, p.y + 0.75, p.z), this.yaw);
       if (result === 'gun') this.weapon?.pickUp();
       return;
     }
@@ -481,14 +526,14 @@ export class EuropaGame {
   private onPointerDown = (event: PointerEvent): void => {
     if (event.button !== 0 || document.pointerLockElement !== this.canvas) return;
     event.preventDefault();
-    this.weapon?.fire();
+    if (this.cameraMode === 'first') this.weapon?.fire();
   };
   private onMouseMove = (event: MouseEvent): void => {
     if (document.pointerLockElement !== this.canvas) return;
     const sensitivity = 0.002;
     this.yaw += event.movementX * sensitivity;
     this.pitch = Scalar.Clamp(this.pitch + event.movementY * sensitivity, -1.48, 1.48);
-    this.camera.rotation.set(this.pitch, this.yaw, 0);
+    this.updateViewCamera();
   };
 
   requestPointerLock(): void {
@@ -504,8 +549,19 @@ export class EuropaGame {
       const playing = document.pointerLockElement === this.canvas;
       if (playing) this.updateMovement(dt);
       this.updateChunkStreaming();
+      this.weapon?.setLocomotion(this.movingSpeed, this.grounded);
       this.weapon?.update(dt);
-      const hint = playing ? (this.abandonedCar?.interactionLabel(this.camera.position, this.yaw) ?? '') : '';
+      this.damageable?.update(dt);
+      const p = this.playerCollider.position;
+      this.avatar?.update(dt, {
+        x: p.x, feetY: p.y - PLAYER_HEIGHT / 2, z: p.z,
+        yaw: this.yaw, speed: this.movingSpeed, sprinting: this.sprinting,
+        grounded: this.grounded, holdingGun: this.weapon?.hasGun ?? false,
+        visible: this.cameraMode === 'third'
+      });
+      const hint = playing ? (this.abandonedCar?.interactionLabel(
+        new Vector3(p.x, p.y + 0.75, p.z), this.yaw
+      ) ?? '') : '';
       if (hint !== this.lastInteractionHint) {
         this.lastInteractionHint = hint;
         this.callbacks.onInteractionHint(hint);
@@ -515,7 +571,7 @@ export class EuropaGame {
       if (this.poiFrameSeconds >= 0.033) {
         this.poiFrameSeconds = 0;
         this.poiMarkers?.update({
-          x: this.camera.position.x, z: this.camera.position.z
+          x: this.playerCollider.position.x, z: this.playerCollider.position.z
         });
       }
       this.statsElapsed += dt;
@@ -541,16 +597,20 @@ export class EuropaGame {
       this.campusGrounds = null;
       if (sites) this.campusGrounds = new CampusGrounds(this.scene, sites);
       this.poiMarkers = new PoiMarkers(this.scene, this.canvas, worldMap, nav, sites);
-      this.poiMarkers.update({ x: this.camera.position.x, z: this.camera.position.z });
+      this.poiMarkers.update({ x: this.playerCollider.position.x, z: this.playerCollider.position.z });
     } catch (error) {
       console.warn('EUROPA: optional landmark labels unavailable', error);
     }
   }
 
   private publishStats(): void {
-    const p = this.camera.position;
+    const p = this.playerCollider.position;
     this.poiMarkers?.update({ x: p.x, z: p.z });
-    this.callbacks.onStats({ fps: Math.round(this.engine.getFps()) || 0, x: p.x, y: p.y, z: p.z, yaw: this.yaw, grounded: this.grounded });
+    this.callbacks.onStats({
+      fps: Math.round(this.engine.getFps()) || 0,
+      x: p.x, y: p.y + EYE_HEIGHT - PLAYER_HEIGHT / 2, z: p.z,
+      yaw: this.yaw, grounded: this.grounded
+    });
   }
 
   private updateMovement(dt: number): void {
@@ -563,9 +623,8 @@ export class EuropaGame {
     );
     if (direction.lengthSquared() > 0) direction.normalize();
     const sprinting = this.keys.has('ShiftLeft') || this.keys.has('ShiftRight');
-    const speed = sprinting ? SPRINT_SPEED : WALK_SPEED;
 
-    const rayOrigin = this.camera.position.add(new Vector3(0, -(EYE_HEIGHT - 0.1), 0));
+    const rayOrigin = this.playerCollider.position.add(new Vector3(0, -PLAYER_HEIGHT / 2 + 0.1, 0));
     const hit = this.scene.pickWithRay(
       new Ray(rayOrigin, new Vector3(0, -1, 0), 0.3),
       mesh => this.solids.includes(mesh as Mesh)
@@ -592,8 +651,11 @@ export class EuropaGame {
     // OSM footprints, not visual triangle faces, are authoritative for walls.
     // The short swept movement cannot cross building outlines, even at sprint
     // speed or when mesh winding makes a facade appear one-sided.
+    this.planarVelocity = stepPlanarMotion(
+      this.planarVelocity, { x: direction.x, z: direction.z }, dt, this.grounded, sprinting
+    );
     const permitted = this.buildingCollisions.move(before, {
-      x: direction.x * speed * dt, z: direction.z * speed * dt
+      x: this.planarVelocity.x * dt, z: this.planarVelocity.z * dt
     }, BUILDING_CLEARANCE);
     this.playerCollider.moveWithCollisions(new Vector3(
       permitted.x - before.x, this.verticalVelocity * dt, permitted.z - before.z
@@ -608,8 +670,12 @@ export class EuropaGame {
     } else {
       this.lastSafePosition = after;
     }
-    this.camera.position.copyFrom(this.playerCollider.position);
-    this.camera.position.y += EYE_HEIGHT - PLAYER_HEIGHT / 2;
+    // Reject velocity against a blocked axis, keeping motion responsive near walls.
+    if (Math.abs(this.playerCollider.position.x - before.x) < Math.abs(this.planarVelocity.x * dt) * 0.35) this.planarVelocity.x = 0;
+    if (Math.abs(this.playerCollider.position.z - before.z) < Math.abs(this.planarVelocity.z * dt) * 0.35) this.planarVelocity.z = 0;
+    this.movingSpeed = Math.hypot(this.planarVelocity.x, this.planarVelocity.z);
+    this.sprinting = sprinting && this.movingSpeed > WALK_SPEED + 0.5;
+    this.updateViewCamera();
   }
 
   dispose(): void {
@@ -620,6 +686,10 @@ export class EuropaGame {
     this.abandonedCar = null;
     this.weapon?.dispose();
     this.weapon = null;
+    this.avatar?.dispose();
+    this.avatar = null;
+    this.damageable?.dispose();
+    this.damageable = null;
     this.poiMarkers?.dispose();
     this.poiMarkers = null;
     this.campusGrounds?.dispose();

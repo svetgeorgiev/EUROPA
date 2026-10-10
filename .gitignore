@@ -19,3 +19,5 @@ public/worlds/*.recovery-backup-*/
 public/assets/vehicles/abandoned-car.glb
 # First-person firearm is a locally acquired Sketchfab asset; do not commit before licence/size review
 public/assets/guns/gun.glb
+# New local character model: check Sketchfab licence, size, rigging, and animation clips before publishing
+public/assets/skins/skin_1.glb

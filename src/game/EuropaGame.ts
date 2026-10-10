@@ -1,9 +1,9 @@
 import { AbandonedCar } from './AbandonedCar';
-import { FirstPersonGun } from './FirstPersonGun';
+import { FirstPersonGun, PRIMARY_WEAPON, M249_WEAPON, type WeaponHudState, type WeaponId } from './FirstPersonGun';
 import { CharacterAvatar } from './CharacterAvatar';
 import { DamageableTargets } from './DamageableTargets';
 import { stepPlanarMotion, type PlanarMotion } from './motionPhysics';
-import type { WeaponAmmo } from './weaponState';
+import { EMPTY_WEAPON } from './weaponState';
 import { renderOSMWorld } from '../world/renderOSM';
 import { ChunkRenderer, type ChunkGeometry } from '../world/ChunkRenderer';
 import { ChunkStreamer, type ChunkStreamStats } from '../world/ChunkStreamer';
@@ -30,7 +30,7 @@ export interface GameCallbacks {
   onVehicleStatus: (message: string) => void;
   onVehicleLocation: (position: Point2 | null) => void;
   onInteractionHint: (hint: string) => void;
-  onWeaponState: (state: WeaponAmmo) => void;
+  onWeaponState: (state: WeaponHudState) => void;
   onCameraMode: (mode: 'first' | 'third') => void;
 }
 
@@ -74,6 +74,8 @@ export class EuropaGame {
   private worldReady = false;
   private abandonedCar: AbandonedCar | null = null;
   private weapon: FirstPersonGun | null = null;
+  private secondWeapon: FirstPersonGun | null = null;
+  private activeWeaponId: WeaponId = 'primary';
   private avatar: CharacterAvatar | null = null;
   private damageable: DamageableTargets | null = null;
   private cameraMode: 'first' | 'third' = 'first';
@@ -122,6 +124,7 @@ export class EuropaGame {
     document.addEventListener('pointerlockchange', this.onPointerLockChange);
     document.addEventListener('mousemove', this.onMouseMove);
     this.canvas.addEventListener('pointerdown', this.onPointerDown);
+    window.addEventListener('pointerup', this.onPointerUp);
     this.engine.runRenderLoop(this.tick);
     this.publishStats();
   }
@@ -373,6 +376,44 @@ export class EuropaGame {
     }
   }
 
+  private getEquippedWeapon(): FirstPersonGun | null {
+    return this.activeWeaponId === 'm249' ? this.secondWeapon : this.weapon;
+  }
+
+  private publishWeaponHud(): void {
+    const active = this.getEquippedWeapon();
+    this.callbacks.onWeaponState({
+      ...(active?.snapshot ?? EMPTY_WEAPON),
+      weaponId: this.activeWeaponId,
+      name: active?.name ?? 'SURVIVOR RIFLE',
+      primaryOwned: this.weapon?.hasGun ?? false,
+      secondaryOwned: this.secondWeapon?.hasGun ?? false
+    });
+  }
+
+  private syncWeaponVisibility(): void {
+    const firstVisible = this.cameraMode === 'first' && this.activeWeaponId === 'primary';
+    const secondVisible = this.cameraMode === 'first' && this.activeWeaponId === 'm249';
+    this.weapon?.setViewModelVisible(firstVisible);
+    this.secondWeapon?.setViewModelVisible(secondVisible);
+  }
+
+  private equipWeapon(id: WeaponId): void {
+    const next = id === 'primary' ? this.weapon : this.secondWeapon;
+    if (!next?.hasGun) {
+      this.callbacks.onVehicleStatus(id === 'm249'
+        ? 'Find the M249 in the abandoned car first'
+        : 'Find the original rifle in the abandoned car first');
+      return;
+    }
+    this.weapon?.setTriggerHeld(false);
+    this.secondWeapon?.setTriggerHeld(false);
+    this.activeWeaponId = id;
+    this.syncWeaponVisibility();
+    this.publishWeaponHud();
+    this.callbacks.onVehicleStatus('Equipped ' + next.name);
+  }
+
   private initVehicle(): void {
     if (this.disposed || this.abandonedCar) return;
     // Visual character is optional; existing invisible physics collider remains authoritative.
@@ -380,10 +421,22 @@ export class EuropaGame {
     this.damageable ??= new DamageableTargets(this.scene, this.callbacks.onVehicleStatus);
     // Create the gun only after test-world meshes have been replaced by the OSM world.
     // This also restores a previously recovered weapon from localStorage.
+    const onShot = (mesh: import('@babylonjs/core').AbstractMesh,
+      point: Vector3, direction: Vector3): void => {
+      this.damageable?.hit(mesh, point, direction);
+    };
     this.weapon ??= new FirstPersonGun(
-      this.scene, this.camera, this.callbacks.onWeaponState, this.callbacks.onVehicleStatus,
-      (mesh, point, direction) => { this.damageable?.hit(mesh, point, direction); }
+      this.scene, this.camera, () => this.publishWeaponHud(), this.callbacks.onVehicleStatus,
+      onShot, PRIMARY_WEAPON
     );
+    this.secondWeapon ??= new FirstPersonGun(
+      this.scene, this.camera, () => this.publishWeaponHud(), this.callbacks.onVehicleStatus,
+      onShot, M249_WEAPON
+    );
+    // A previous save can contain either weapon: select an owned slot.
+    if (!this.weapon.hasGun && this.secondWeapon.hasGun) this.activeWeaponId = 'm249';
+    this.syncWeaponVisibility();
+    this.publishWeaponHud();
     // Initial placement near СУ Иван Вазов, not a surveyed parking bay.
     // Avoid OSM building footprint collisions before spawning.
     const safe = this.buildingCollisions.findSafePosition(
@@ -396,7 +449,8 @@ export class EuropaGame {
     const vehicle = new AbandonedCar(
       this.scene, this.callbacks.onVehicleStatus,
       () => !this.weapon?.hasGun,
-      () => !!this.weapon?.hasGun && this.weapon.snapshot.reserve < 8
+      () => this.getEquippedWeapon()?.needsAmmo ?? false,
+      () => !!this.weapon?.hasGun && !this.secondWeapon?.hasGun
     );
     this.abandonedCar = vehicle;
     this.callbacks.onVehicleLocation(safe);
@@ -483,7 +537,9 @@ export class EuropaGame {
     if (event.code === 'KeyC' && !event.repeat && document.pointerLockElement === this.canvas) {
       event.preventDefault();
       this.cameraMode = this.cameraMode === 'first' ? 'third' : 'first';
-      this.weapon?.setViewModelVisible(this.cameraMode === 'first');
+      this.weapon?.setTriggerHeld(false);
+      this.secondWeapon?.setTriggerHeld(false);
+      this.syncWeaponVisibility();
       this.callbacks.onCameraMode(this.cameraMode);
       this.updateViewCamera();
       return;
@@ -495,7 +551,13 @@ export class EuropaGame {
     }
     if (event.code === 'KeyG' && !event.repeat && document.pointerLockElement === this.canvas) {
       event.preventDefault();
-      this.weapon?.toggleGunDirection();
+      this.getEquippedWeapon()?.toggleGunDirection();
+      return;
+    }
+    if ((event.code === 'Digit1' || event.code === 'Digit2') && !event.repeat &&
+        document.pointerLockElement === this.canvas) {
+      event.preventDefault();
+      this.equipWeapon(event.code === 'Digit1' ? 'primary' : 'm249');
       return;
     }
     if (event.code === 'KeyV' && !event.repeat && document.pointerLockElement === this.canvas) {
@@ -507,13 +569,20 @@ export class EuropaGame {
       event.preventDefault();
       const p = this.playerCollider.position;
       const result = this.abandonedCar?.interact(new Vector3(p.x, p.y + 0.75, p.z), this.yaw);
-      if (result === 'gun') this.weapon?.pickUp();
-      if (result === 'ammo') this.weapon?.restock(24);
+      if (result === 'gun') {
+        this.weapon?.pickUp();
+        this.equipWeapon('primary');
+      }
+      if (result === 'gun2') {
+        this.secondWeapon?.pickUp();
+        this.equipWeapon('m249');
+      }
+      if (result === 'ammo') this.getEquippedWeapon()?.restock();
       return;
     }
     if (event.code === 'KeyF' && !event.repeat && document.pointerLockElement === this.canvas) {
       event.preventDefault();
-      this.weapon?.reload();
+      this.getEquippedWeapon()?.reload();
       return;
     }
     if (event.code === 'KeyR' && !event.repeat) {
@@ -534,12 +603,24 @@ export class EuropaGame {
   private onResize = (): void => { this.engine.resize(); };
   private onPointerLockChange = (): void => {
     this.callbacks.onLockChange(document.pointerLockElement === this.canvas);
-    if (document.pointerLockElement !== this.canvas) this.keys.clear();
+    if (document.pointerLockElement !== this.canvas) {
+      this.keys.clear();
+      this.weapon?.setTriggerHeld(false);
+      this.secondWeapon?.setTriggerHeld(false);
+    }
   };
   private onPointerDown = (event: PointerEvent): void => {
     if (event.button !== 0 || document.pointerLockElement !== this.canvas) return;
     event.preventDefault();
-    if (this.cameraMode === 'first') this.weapon?.fire();
+    if (this.cameraMode === 'first') {
+      this.getEquippedWeapon()?.setTriggerHeld(true);
+      this.getEquippedWeapon()?.fire();
+    }
+  };
+  private onPointerUp = (event: PointerEvent): void => {
+    if (event.button !== 0) return;
+    this.weapon?.setTriggerHeld(false);
+    this.secondWeapon?.setTriggerHeld(false);
   };
   private onMouseMove = (event: MouseEvent): void => {
     if (document.pointerLockElement !== this.canvas) return;
@@ -563,13 +644,15 @@ export class EuropaGame {
       if (playing) this.updateMovement(dt);
       this.updateChunkStreaming();
       this.weapon?.setLocomotion(this.movingSpeed, this.grounded);
+      this.secondWeapon?.setLocomotion(this.movingSpeed, this.grounded);
       this.weapon?.update(dt);
+      this.secondWeapon?.update(dt);
       this.damageable?.update(dt);
       const p = this.playerCollider.position;
       this.avatar?.update(dt, {
         x: p.x, feetY: p.y - PLAYER_HEIGHT / 2, z: p.z,
         yaw: this.yaw, speed: this.movingSpeed, sprinting: this.sprinting,
-        grounded: this.grounded, holdingGun: this.weapon?.hasGun ?? false,
+        grounded: this.grounded, holdingGun: this.getEquippedWeapon()?.hasGun ?? false,
         visible: this.cameraMode === 'third'
       });
       const hint = playing ? (this.abandonedCar?.interactionLabel(
@@ -699,6 +782,8 @@ export class EuropaGame {
     this.abandonedCar = null;
     this.weapon?.dispose();
     this.weapon = null;
+    this.secondWeapon?.dispose();
+    this.secondWeapon = null;
     this.avatar?.dispose();
     this.avatar = null;
     this.damageable?.dispose();
@@ -722,6 +807,7 @@ export class EuropaGame {
     document.removeEventListener('pointerlockchange', this.onPointerLockChange);
     document.removeEventListener('mousemove', this.onMouseMove);
     this.canvas.removeEventListener('pointerdown', this.onPointerDown);
+    window.removeEventListener('pointerup', this.onPointerUp);
     this.engine.stopRenderLoop(this.tick);
     this.scene.dispose();
     this.engine.dispose();

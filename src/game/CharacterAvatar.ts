@@ -13,6 +13,7 @@ interface AvatarMotion {
   sprinting: boolean;
   grounded: boolean;
   holdingGun: boolean;
+  weaponId?: 'primary' | 'm249' | null;
   visible: boolean;
 }
 type AvatarClip = 'idle' | 'walk' | 'run' | 'jump' | 'armed';
@@ -56,6 +57,10 @@ export class CharacterAvatar {
   private readonly leftElbow: TransformNode;
   private readonly rightElbow: TransformNode;
   private readonly weaponProxy: Mesh;
+  private readonly weaponAttachment: TransformNode;
+  private rightHand: TransformNode | null = null;
+  private thirdPersonM249: TransformNode | null = null;
+  private m249Loading = false;
 
   private gltfRoot: TransformNode | null = null;
   private animationGroups: AnimationGroup[] = [];
@@ -134,8 +139,11 @@ export class CharacterAvatar {
       createBox('avatar-' + name + '-hand', elbow,
         new Vector3(0.13, 0.12, 0.12), new Vector3(0, -0.29, 0), skin);
     }
-    this.weaponProxy = createBox('avatar-held-weapon-standin', this.mannequin,
-      new Vector3(0.12, 0.12, 0.48), new Vector3(0.21, 1.11, 0.49), gun);
+    this.weaponAttachment = new TransformNode('avatar-right-hand-weapon-attachment', scene);
+    this.weaponAttachment.parent = this.root;
+    this.weaponAttachment.position.set(0.28, 1.15, 0.45);
+    this.weaponProxy = createBox('avatar-held-weapon-standin', this.weaponAttachment,
+      new Vector3(0.12, 0.12, 0.48), new Vector3(0, 0, 0.16), gun);
     this.weaponProxy.setEnabled(false);
 
     this.root.setEnabled(false);
@@ -220,6 +228,7 @@ export class CharacterAvatar {
         )
       );
       const nodes = [...linked, ...imported.transformNodes];
+      this.rightHand = nodes.find(node => /^hand_L\.R_\d+$/i.test(node.name)) ?? null;
       for (const key of Object.keys(SKIN_715_BONES) as RigJointName[]) {
         const node = nodes.find(candidate => SKIN_715_BONES[key].test(candidate.name));
         if (!node) continue;
@@ -338,8 +347,86 @@ export class CharacterAvatar {
       this.leftElbow.rotation.x = 0;
       this.rightElbow.rotation.x = 0;
     }
-    this.weaponProxy.setEnabled(motion.holdingGun);
+    if (motion.holdingGun && motion.weaponId === 'm249' &&
+        !this.thirdPersonM249 && !this.m249Loading) void this.loadThirdPersonM249();
+    // Follow the real skinned hand after pose update when the asset has one.
+    if (this.rightHand && this.gltfRoot && !this.staticPreview) {
+      this.root.computeWorldMatrix(true);
+      this.rightHand.computeWorldMatrix(true);
+      const handWorld = this.rightHand.getAbsolutePosition();
+      const transform = this.root.getWorldMatrix().clone().invert();
+      const handLocal = Vector3.TransformCoordinates(handWorld, transform);
+      if (handLocal.length() < 4) {
+        this.weaponAttachment.position.copyFrom(handLocal);
+        this.weaponAttachment.position.addInPlace(new Vector3(0.04, -0.09, 0.22));
+      }
+    } else {
+      this.weaponAttachment.position.set(0.28, 1.15, 0.45);
+    }
+    const showActualM249 = motion.holdingGun && motion.weaponId === 'm249' &&
+      this.thirdPersonM249 !== null;
+    this.thirdPersonM249?.setEnabled(showActualM249);
+    this.weaponProxy.setEnabled(motion.holdingGun && !showActualM249);
     this.mannequin.position.y = Math.abs(gait) * amount * 0.022;
+  }
+
+  private async loadThirdPersonM249(): Promise<void> {
+    if (this.m249Loading || this.disposed || this.thirdPersonM249) return;
+    this.m249Loading = true;
+    const root = new TransformNode('third-person-m249-import', this.scene);
+    const pivot = new TransformNode('third-person-m249-orientation', this.scene);
+    try {
+      const result = await SceneLoader.ImportMeshAsync('', '/assets/guns/', 'gun2.glb', this.scene);
+      if (this.disposed) {
+        result.meshes.forEach(mesh => mesh.dispose(false, true));
+        root.dispose();
+        pivot.dispose();
+        return;
+      }
+      const nodes: TransformNode[] = [...result.transformNodes, ...result.meshes];
+      const imported = new Set(nodes);
+      nodes.filter(node => !node.parent || !imported.has(node.parent as TransformNode))
+        .forEach(node => { node.parent = root; });
+      root.computeWorldMatrix(true);
+      const renderables = result.meshes.filter(
+        (mesh): mesh is AbstractMesh => mesh instanceof AbstractMesh && mesh.getTotalVertices() > 0
+      );
+      if (!renderables.length) throw new Error('M249 contains no renderable geometry');
+      const min = new Vector3(Infinity, Infinity, Infinity);
+      const max = new Vector3(-Infinity, -Infinity, -Infinity);
+      for (const mesh of renderables) {
+        mesh.computeWorldMatrix(true);
+        const box = mesh.getBoundingInfo().boundingBox;
+        min.minimizeInPlace(box.minimumWorld);
+        max.maximizeInPlace(box.maximumWorld);
+        mesh.isPickable = false;
+        mesh.checkCollisions = false;
+      }
+      const dim = max.subtract(min);
+      const extent = Math.max(dim.x, dim.y, dim.z);
+      if (!Number.isFinite(extent) || extent < 0.001) throw new Error('Invalid M249 bounds');
+      root.scaling.setAll(0.95 / extent);
+      root.position.set(
+        -(min.x + max.x) * root.scaling.x / 2,
+        -(min.y + max.y) * root.scaling.x / 2,
+        -(min.z + max.z) * root.scaling.x / 2
+      );
+      root.parent = pivot;
+      pivot.parent = this.weaponAttachment;
+      pivot.rotation.x = dim.y > dim.x && dim.y > dim.z ? Math.PI / 2 : 0;
+      pivot.rotation.y = dim.x > dim.y && dim.x > dim.z ? Math.PI / 2 : 0;
+      this.thirdPersonM249 = pivot;
+      this.notify('Third-person M249 mesh attached near survivor right hand');
+    } catch (error) {
+      pivot.dispose(false, true);
+      root.dispose(false, true);
+      if (!this.disposed) {
+        console.warn('EUROPA: third-person M249 import failed', error);
+        this.notify('Third-person gun2.glb failed to load; showing fallback prop');
+      }
+    } finally {
+      this.m249Loading = false;
+    }
   }
 
   private rotateJoint(name: RigJointName, axis: Vector3, radians: number): void {
@@ -388,6 +475,8 @@ export class CharacterAvatar {
     this.activeClip?.stop();
     for (const group of this.animationGroups) group.dispose();
     this.animationGroups = [];
+    this.thirdPersonM249?.dispose(false, true);
+    this.thirdPersonM249 = null;
     this.gltfRoot?.dispose(false, true);
     this.root.dispose(false, true);
     for (const mat of this.mats) mat.dispose();

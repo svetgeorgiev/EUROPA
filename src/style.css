@@ -24,3 +24,7 @@
 .poi-marker--campus{border-color:#d2c68d;background:#21342fee;box-shadow:0 3px 18px #0009,0 0 0 1px #85996a44}
 .poi-marker--campus strong{color:#fff1cb}
 .poi-marker--campus span{color:#d4e4af}
+
+/* EUROPA-002E: world-space vehicle interaction UI. */
+.vehicle-interaction{position:absolute;left:50%;top:calc(50% + 37px);transform:translateX(-50%);z-index:9;pointer-events:none;padding:9px 15px;border:1px solid #e9b55e88;border-radius:6px;background:#081216df;color:#f9e3b4;font-size:13px;font-weight:700;text-align:center;white-space:nowrap}
+.vehicle-status{position:absolute;bottom:55px;left:28px;z-index:9;pointer-events:none;max-width:min(590px,85vw);padding:9px 12px;border-radius:6px;background:#081216dc;border:1px solid #ffffff33;color:#e8f0ec;font-size:12px;line-height:1.4}

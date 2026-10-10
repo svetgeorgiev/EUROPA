@@ -1,8 +1,17 @@
 import { geoToWorld, type GeoAnchor } from '../geo/coordinates.ts';
+import { extractBuildings, type SourceFeature } from './osmBuildingImports.ts';
 
 export type Point2 = { x: number; z: number };
 export type RoadSegment = { id: number; highway: string; widthMeters: number; a: Point2; b: Point2 };
-export type BuildingFootprint = { id: number; heightMeters: number; outline: Point2[] };
+export type BuildingFootprint = {
+  id: number; heightMeters: number; outline: Point2[];
+  /** Original OSM way/id or relation/id when known. Legacy maps omit this. */
+  sourceId?: string;
+  buildingType?: string;
+  roofShape?: string;
+  roofMaterial?: string;
+  roofHeightMeters?: number;
+};
 
 export interface WorldMap {
   schemaVersion: 1;
@@ -18,14 +27,8 @@ export interface WorldMap {
 }
 
 interface NodePosition { lat: number; lon: number }
-interface OsmWay {
-  type: string;
-  id: number;
-  tags?: Record<string, string>;
-  geometry?: NodePosition[];
-}
 export interface OverpassData {
-  elements: OsmWay[];
+  elements: SourceFeature[];
   osm3s?: { timestamp_osm_base?: string };
 }
 
@@ -69,21 +72,6 @@ function clipSegment(a: Point2, b: Point2, limit: number): [Point2, Point2] | nu
   return [first, last];
 }
 
-function buildingHeight(tags: Record<string, string>): number {
-  const heightTag = tags.height?.replace(',', '.').match(/^([\d.]+)\s*(m)?$/i);
-  const levelsTag = tags['building:levels']?.replace(',', '.').match(/^([\d.]+)$/);
-  const value = heightTag ? Number(heightTag[1]) : levelsTag ? Number(levelsTag[1]) * 3 : 6 + (Number(tags.building === 'apartments') * 6);
-  return Number.isFinite(value) ? Math.max(2.5, Math.min(60, value)) : 6;
-}
-
-function polygonArea(points: Point2[]): number {
-  let twiceArea = 0;
-  for (let i = 0; i < points.length; i++) {
-    const next = points[(i + 1) % points.length];
-    twiceArea += points[i].x * next.z - next.x * points[i].z;
-  }
-  return Math.abs(twiceArea / 2);
-}
 
 export function buildWorldMap(
   data: OverpassData,
@@ -92,7 +80,6 @@ export function buildWorldMap(
 ): WorldMap {
   if (!Array.isArray(data?.elements)) throw new Error('Overpass response has no elements array');
   const roads: RoadSegment[] = [];
-  const buildings: BuildingFootprint[] = [];
   const limit = MAP_HALF_SIZE_METERS + CLIP_MARGIN;
   for (const way of data.elements) {
     if (way.type !== 'way' || !Number.isSafeInteger(way.id) || !Array.isArray(way.geometry)) continue;
@@ -106,18 +93,11 @@ export function buildWorldMap(
         if (clipped) roads.push({ id: way.id, highway: way.tags.highway, widthMeters: width, a: clipped[0], b: clipped[1] });
       }
     }
-    if (!way.tags.building) continue;
-    // MVP: closed OSM ways only. Multipolygon relations and inner courtyards are future work.
-    const points = line.slice();
-    const first = points[0], last = points[points.length - 1];
-    if (Math.hypot(first.x - last.x, first.z - last.z) > 0.5 || points.length < 4) continue;
-    points.pop();
-    if (points.length < 3) continue;
-    if (points.some(p => Math.abs(p.x) > limit || Math.abs(p.z) > limit)) continue;
-    const area = polygonArea(points);
-    if (area < 8 || area > 150000) continue;
-    buildings.push({ id: way.id, heightMeters: buildingHeight(way.tags), outline: points });
   }
+  // Building geometry is imported separately so roads preserve their stable
+  // 002B representation while boundary-crossing outlines and simple OSM
+  // multipolygon relations can be handled without fabricating POI buildings.
+  const { buildings } = extractBuildings(data.elements, anchor);
   return {
     schemaVersion: 1, location: 'Nova Zagora, Bulgaria',
     source: 'OpenStreetMap', attribution: '© OpenStreetMap contributors',

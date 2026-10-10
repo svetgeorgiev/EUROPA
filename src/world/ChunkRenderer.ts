@@ -1,11 +1,12 @@
 import { Mesh, MeshBuilder, Scene } from '@babylonjs/core';
-import { makeBuilding, makeRoadSurface } from './renderOSM';
+import { makeBuilding, makeRoadSurface, makeRoof } from './renderOSM';
 import {
   createWorldMaterials, renderProceduralFacadeDetails,
-  renderProceduralRoadDetails, type WorldMaterials
+  renderProceduralRoadDetails, makeDetailMesh, type WorldMaterials
 } from './worldAppearance.ts';
 import type { ChunkFile, ChunkManifest } from './chunkGrid';
 import type { MapBounds } from './roadJunctions.ts';
+import { generateRoadsideTrees, buildTreeGeometry } from './Streetscape.ts';
 
 export interface ChunkGeometry { meshes: Mesh[]; solids: Mesh[]; }
 const PEDESTRIAN = new Set(['footway', 'path', 'pedestrian', 'cycleway', 'track']);
@@ -81,6 +82,11 @@ export class ChunkRenderer {
           // The ground alone handles vertical collision. Footprint collision
           // is registered separately by EuropaGame even if a facade fails.
           solids.push(building);
+          try {
+            const roof = makeRoof(this.scene, footprint,
+              this.materials.roofs[Math.abs(footprint.id) % this.materials.roofs.length]);
+            if (roof) meshes.push(roof);
+          } catch (error) { warn('roof ' + footprint.id, error); }
         } catch (error) { warn('building ' + footprint.id, error); }
       }
 
@@ -90,6 +96,25 @@ export class ChunkRenderer {
         );
         if (facades) meshes.push(facades);
       } catch (error) { warn('facade details', error); }
+
+      // Procedural vegetation fills some visual emptiness along mapped streets.
+      // Trees are not claimed to be actual OSM tree inventory and are not colliders.
+      try {
+        const placements = generateRoadsideTrees(
+          chunk.roads, chunk.buildings, bounds
+        );
+        const trees = buildTreeGeometry(placements);
+        const trunk = makeDetailMesh(
+          this.scene, 'chunk-tree-trunks-' + chunk.id,
+          trees.trunks, this.materials.treeBark
+        );
+        const crown = makeDetailMesh(
+          this.scene, 'chunk-tree-foliage-' + chunk.id,
+          trees.foliage, this.materials.treeFoliage
+        );
+        if (trunk) meshes.push(trunk);
+        if (crown) meshes.push(crown);
+      } catch (error) { warn('procedural roadside trees', error); }
 
       return { meshes, solids };
     } catch (error) {

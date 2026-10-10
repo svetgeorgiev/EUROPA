@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onBeforeUnmount, ref } from 'vue';
+import { onMounted, onBeforeUnmount, ref, watch } from 'vue';
 import LocalMap from './components/LocalMap.vue';
 import { isWorldMap, type WorldMap } from './world/osm';
 import { isNavigationData, type NavigationData } from './world/navigation';
@@ -30,6 +30,11 @@ function onKeyDown(event: KeyboardEvent): void {
   }
 }
 let game: EuropaGame | null = null;
+watch([fullMap, navigation, worldMode], () => {
+  if (game && fullMap.value && navigation.value && worldMode.value !== 'test') {
+    game.setPoiData(fullMap.value, navigation.value);
+  }
+});
 onMounted(() => {
   window.addEventListener('keydown', onKeyDown);
   // This map is local to EUROPA's static host, not a live OSM API request.
@@ -74,7 +79,7 @@ function start(): void { game?.requestPointerLock(); }
 <template>
   <main class="viewport">
     <canvas ref="canvas" class="game-canvas" @click="start" aria-label="EUROPA 3D game viewport" />
-    <header class="hud-top"><div class="brand">EUROPA <span>002C</span></div><div class="sub">{{ worldMode === 'stream' ? 'STREAMED REAL-WORLD GEOMETRY' : worldMode !== 'test' ? 'STATIC OSM WORLD · RUN pnpm map:chunks' : 'TEST ENVIRONMENT · IMPORT PENDING' }}</div></header>
+    <header class="hud-top"><div class="brand">EUROPA <span>002D</span></div><div class="sub">{{ worldMode === 'stream' ? 'STREAMED REAL-WORLD GEOMETRY' : worldMode !== 'test' ? 'STATIC OSM WORLD · RUN pnpm map:chunks' : 'TEST ENVIRONMENT · IMPORT PENDING' }}</div></header>
     <div class="stats" aria-live="off"><strong>{{ stats.fps }}</strong> FPS <span class="separator">·</span> X {{ stats.x.toFixed(1) }} · Y {{ stats.y.toFixed(1) }} · Z {{ stats.z.toFixed(1) }} <span class="separator">·</span> {{ stats.grounded ? 'GROUNDED' : 'AIRBORNE' }}</div>
     <div class="geo-preview" :title="worldMode !== 'test' ? 'Real OSM planimetric geometry; flat elevation is not yet implemented' : 'Simulated projection only — run pnpm map:fetch to import real roads and buildings'">{{ worldMode !== 'test' ? 'OSM GEO PREVIEW · FLAT TERRAIN' : 'GEO PREVIEW (SIMULATED)' }} · {{ previewGeo.latitude.toFixed(6) }}° N · {{ previewGeo.longitude.toFixed(6) }}° E</div>
     <div v-if="worldMode === 'stream'" class="stream-debug" aria-live="off"

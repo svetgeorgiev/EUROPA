@@ -29,12 +29,14 @@ export class FirstPersonGun {
   private disposed = false;
   private cooldown = 0;
   private recoil = 0;
+  private viewModelVisible = true;
 
   constructor(
     private readonly scene: Scene,
     private readonly camera: FreeCamera,
     private readonly publish: (ammo: WeaponAmmo) => void,
-    private readonly notify: (message: string) => void
+    private readonly notify: (message: string) => void,
+    private readonly onWorldImpact?: (mesh: AbstractMesh, position: Vector3, direction: Vector3) => void
   ) {
     try {
       const saved: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null');
@@ -56,6 +58,11 @@ export class FirstPersonGun {
 
   get hasGun(): boolean { return this.ammo.owned; }
   get snapshot(): WeaponAmmo { return { ...this.ammo }; }
+
+  setViewModelVisible(visible: boolean): void {
+    this.viewModelVisible = visible;
+    this.pivot.setEnabled(this.ammo.owned && visible);
+  }
 
   private save(): void {
     try { localStorage.setItem(STORAGE_KEY, JSON.stringify(this.ammo)); }
@@ -157,7 +164,7 @@ export class FirstPersonGun {
     if (this.disposed || this.ammo.owned) return;
     this.ammo = pickUpWeapon(this.ammo);
     this.save();
-    this.pivot.setEnabled(true);
+    this.pivot.setEnabled(this.viewModelVisible);
     this.notify('Firearm recovered from vehicle · left mouse button to fire · F to reload');
     void this.loadModel();
   }
@@ -175,11 +182,15 @@ export class FirstPersonGun {
     this.save();
     this.cooldown = SHOT_COOLDOWN_SECONDS;
     this.recoil = 1;
+    const direction = this.camera.getForwardRay(MAX_RANGE_METRES);
     const hit = this.scene.pickWithRay(
-      this.camera.getForwardRay(MAX_RANGE_METRES),
+      direction,
       mesh => mesh.isPickable && mesh.isEnabled()
     );
-    if (hit?.hit && hit.pickedPoint) this.makeImpact(hit.pickedPoint);
+    if (hit?.hit && hit.pickedPoint) {
+      this.makeImpact(hit.pickedPoint);
+      if (hit.pickedMesh) this.onWorldImpact?.(hit.pickedMesh, hit.pickedPoint, direction.direction.clone());
+    }
     if (this.ammo.loaded === 0) {
       this.notify(this.ammo.reserve > 0 ? 'Magazine empty · press F to reload' : 'Out of ammunition');
     }

@@ -14,6 +14,12 @@ import {
  * Hitscan impacts only: no NPC damage, physical projectiles or combat AI.
  */
 export type WeaponId = 'primary' | 'm249';
+export interface WeaponHudState extends WeaponAmmo {
+  weaponId: WeaponId;
+  name: string;
+  primaryOwned: boolean;
+  secondaryOwned: boolean;
+}
 export interface WeaponConfig {
   id: WeaponId;
   name: string;

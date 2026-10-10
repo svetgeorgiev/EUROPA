@@ -1,7 +1,7 @@
 name: Validate EUROPA
 on:
   push:
-    branches: [main, 'feat/europa-002d2-building-coverage-architecture']
+    branches: [main, 'feat/europa-002d2-building-coverage-architecture', 'feat/europa-002d3-building-coverage-recovery']
   pull_request:
 jobs:
   validate:

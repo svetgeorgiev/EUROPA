@@ -67,3 +67,8 @@ A future fresh raw OSM extract can be imported with `pnpm map:fetch --input "pat
 ### 002D.2b — Landmarks and trees
 
 Floating landmarks now use upright HTML camera projections instead of mirrored Babylon billboards. Procedural verge trees add atmosphere in streamed chunks without inventing additional mapped buildings. [See the streetscape guide](docs/GEO-002D2-STREETSCAPE.md).
+
+
+### EUROPA-002D.3 — Offline real-building recovery
+
+A preview-first pipeline imports small osmium GeoJSON extracts with genuine OSM feature IDs, compares coverage and optional school/civic sites, and only replaces the game map plus all sixteen chunks via an explicit, quality-gated `--apply`. See [building recovery guide](docs/GEO-002D3-RECOVERY.md). The game never invents physical buildings from POI pins.

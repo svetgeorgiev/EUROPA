@@ -14,6 +14,9 @@ export interface SourceFeature {
   id: number;
   tags?: Record<string, string>;
   geometry?: NodePosition[];
+  /** Raw OSM nodes used to build the co-snapshot navigation layer. */
+  lat?: number;
+  lon?: number;
   members?: Member[];
 }
 const LIMIT = 500;
@@ -85,6 +88,69 @@ function clipToWorld(outline: Point2[]): Point2[] | null {
     return null;
   }
 }
+/** A measured boundary fragment is never used to build a 3D collider. */
+function measureTinyBoundaryFragment(outline: Point2[]): number | null {
+  if (outline.length < 3 || area(outline) < 8 ||
+      outline.every(p => Math.abs(p.x) <= LIMIT && Math.abs(p.z) <= LIMIT)) {
+    return null;
+  }
+  const ring = outline.map(point => [point.x, point.z] as [number, number]);
+  const first = ring[0], last = ring.at(-1)!;
+  if (Math.hypot(first[0] - last[0], first[1] - last[1]) > 1e-5) ring.push([...first]);
+  try {
+    // Classify ONLY one simple intersection ring; complex geometry must
+    // remain blocked from the apply gate, never silently treated as a sliver.
+    const polygons = polygonClipping.intersection([ring], [RECT]);
+    if (polygons.length !== 1 || polygons[0].length !== 1) return null;
+    const clipped = polygons[0][0].slice(0, -1).map(([x, z]) => ({ x, z }));
+    if (clipped.length < 3 || clipped.length > 300) return null;
+    const size = area(clipped);
+    return size > 0.05 && size < 8 ? size : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Uses exactly the same validation and clipping as the physical importer.
+ * Diagnostic-only: never alters the world or bypasses the 8m² safety limit.
+ */
+export function inspectBuildingFootprint(
+  geography: NodePosition[] | undefined, anchor: GeoAnchor
+): {
+  status: 'accepted' | 'invalid-coordinates' | 'open-ring' |
+    'outside-world' | 'boundary-sliver' | 'clip-rejected';
+  sourceAreaMeters2: number | null;
+  importedAreaMeters2: number | null;
+  bounds: { minX: number; maxX: number; minZ: number; maxZ: number } | null;
+} {
+  const rejected = (status: 'invalid-coordinates' | 'open-ring') =>
+    ({ status, sourceAreaMeters2: null, importedAreaMeters2: null, bounds: null });
+  if (!validCoords(geography) || !geography) return rejected('invalid-coordinates');
+  if (!closed(geography)) return rejected('open-ring');
+  const points = toLocal(geography.slice(0, -1), anchor);
+  const bounds = {
+    minX: Math.min(...points.map(p => p.x)),
+    maxX: Math.max(...points.map(p => p.x)),
+    minZ: Math.min(...points.map(p => p.z)),
+    maxZ: Math.max(...points.map(p => p.z))
+  };
+  const sourceAreaMeters2 = area(points);
+  const clipped = clipToWorld(points);
+  if (clipped) {
+    return { status: 'accepted', sourceAreaMeters2,
+      importedAreaMeters2: area(clipped), bounds };
+  }
+  const whollyOutside = bounds.maxX < -LIMIT || bounds.minX > LIMIT ||
+    bounds.maxZ < -LIMIT || bounds.minZ > LIMIT;
+  const fragmentArea = whollyOutside ? null : measureTinyBoundaryFragment(points);
+  return {
+    status: whollyOutside ? 'outside-world' :
+      fragmentArea !== null ? 'boundary-sliver' : 'clip-rejected',
+    sourceAreaMeters2, importedAreaMeters2: fragmentArea, bounds
+  };
+}
+
 function joinOuters(parts: NodePosition[][]): NodePosition[] | null {
   if (!parts.length || parts.length > 30) return null;
   const remaining = parts.map(p => [...p]);
@@ -150,6 +216,15 @@ export function extractBuildings(
     if (item.type !== 'relation' || !item.tags?.building ||
         item.tags.building === 'no' || !Number.isSafeInteger(item.id) ||
         item.tags.type !== 'multipolygon') continue;
+    // osmium GeoJSON already assembles relation outer rings into polygon
+    // coordinates. Only single outer polygons without inner rings are
+    // normalised this way; the converter rejects unsupported hole shapes.
+    if (item.geometry && item.geometry.length >= 4) {
+      if (!make('relation/' + item.id, -item.id, item.tags, item.geometry, true)) {
+        unsupportedRelations++;
+      }
+      continue;
+    }
     const members = item.members ?? [];
     if (members.some(m => m.role === 'inner')) {
       unsupportedRelations++;

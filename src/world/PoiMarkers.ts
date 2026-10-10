@@ -2,10 +2,15 @@ import { Matrix, Scene, Vector3 } from '@babylonjs/core';
 import { getCoverageReport, type LandmarkCoverage } from './buildingCoverage.ts';
 import type { WorldMap, Point2 } from './osm.ts';
 import type { NavigationData } from './navigation.ts';
+import {
+  mappedBuildingsOnCampus, mappedSchoolForLandmark,
+  type CampusSiteData
+} from './CampusSites.ts';
 
 interface Marker {
   position: Point2;
   element: HTMLDivElement;
+  schoolGrounds: boolean;
 }
 
 /**
@@ -19,7 +24,10 @@ export class PoiMarkers {
   private readonly scene: Scene;
   private readonly canvas: HTMLCanvasElement;
 
-  constructor(scene: Scene, canvas: HTMLCanvasElement, map: WorldMap, nav: NavigationData) {
+  constructor(
+    scene: Scene, canvas: HTMLCanvasElement, map: WorldMap,
+    nav: NavigationData, sites: CampusSiteData | null = null
+  ) {
     this.scene = scene;
     this.canvas = canvas;
     const parent = canvas.parentElement;
@@ -34,7 +42,7 @@ export class PoiMarkers {
 
     try {
       for (const entry of getCoverageReport(map, nav).slice(0, 45)) {
-        const marker = this.makeMarker(entry);
+        const marker = this.makeMarker(entry, map, sites);
         layer.appendChild(marker.element);
         this.markers.push(marker);
       }
@@ -44,20 +52,29 @@ export class PoiMarkers {
     }
   }
 
-  private makeMarker(entry: LandmarkCoverage): Marker {
+  private makeMarker(
+    entry: LandmarkCoverage, map: WorldMap, sites: CampusSiteData | null
+  ): Marker {
     const mappedFootprint = entry.status !== 'no-nearby-footprint';
+    const school = sites ? mappedSchoolForLandmark(entry.landmark, sites.sites) : null;
+    const campusBuildingCount = school
+      ? mappedBuildingsOnCampus(school, map.buildings).length : 0;
     const element = document.createElement('div');
-    element.className = mappedFootprint ? 'poi-marker' : 'poi-marker poi-marker--no-footprint';
+    element.className = school ? 'poi-marker poi-marker--campus'
+      : mappedFootprint ? 'poi-marker' : 'poi-marker poi-marker--no-footprint';
     const title = document.createElement('strong');
     // textContent avoids accidentally interpreting OSM user-provided names as HTML.
     title.textContent = entry.landmark.name;
     const caption = document.createElement('span');
-    caption.textContent = mappedFootprint
-      ? 'OSM LANDMARK · NEAR IMPORTED BUILDING'
-      : 'OSM POI · NO IMPORTED BUILDING OUTLINE';
+    caption.textContent = school
+      ? 'MAPPED SCHOOL GROUNDS · ' + campusBuildingCount +
+        (campusBuildingCount === 1 ? ' BUILDING IN SITE' : ' BUILDINGS IN SITE')
+      : mappedFootprint
+        ? 'OSM LANDMARK · NEAR IMPORTED BUILDING'
+        : 'OSM POI · NO IMPORTED BUILDING OUTLINE';
     element.append(title, caption);
     element.hidden = true;
-    return { position: entry.landmark.point, element };
+    return { position: entry.landmark.point, element, schoolGrounds: school !== null };
   }
 
   /** Run at most ~30 fps from the game loop, even at high render rates. */
@@ -71,11 +88,14 @@ export class PoiMarkers {
     const viewport = camera.viewport.toGlobal(width, height);
     const cssX = this.canvas.clientWidth / width;
     const cssY = this.canvas.clientHeight / height;
-    const maxSq = maxDistance * maxDistance;
     let shown = 0;
     for (const marker of this.markers) {
+      // Campus identity is useful before arriving at the school gate. Other
+      // POIs retain the existing short range to avoid a wall of labels.
+      const range = marker.schoolGrounds ? Math.max(maxDistance, 130) : maxDistance;
       const dx = marker.position.x - player.x, dz = marker.position.z - player.z;
-      if (dx * dx + dz * dz > maxSq || dx * dx + dz * dz < 16 || shown >= 8) {
+      if (dx * dx + dz * dz > range * range ||
+          dx * dx + dz * dz < 16 || shown >= 8) {
         marker.element.hidden = true;
         continue;
       }

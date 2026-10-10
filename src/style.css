@@ -28,3 +28,11 @@
 /* EUROPA-002E: world-space vehicle interaction UI. */
 .vehicle-interaction{position:absolute;left:50%;top:calc(50% + 37px);transform:translateX(-50%);z-index:9;pointer-events:none;padding:9px 15px;border:1px solid #e9b55e88;border-radius:6px;background:#081216df;color:#f9e3b4;font-size:13px;font-weight:700;text-align:center;white-space:nowrap}
 .vehicle-status{position:absolute;bottom:55px;left:28px;z-index:9;pointer-events:none;max-width:min(590px,85vw);padding:9px 12px;border-radius:6px;background:#081216dc;border:1px solid #ffffff33;color:#e8f0ec;font-size:12px;line-height:1.4}
+
+/* EUROPA-002F — first-person firearm state (non-interactive HUD) */
+.weapon-hud{position:absolute;right:25px;bottom:32px;z-index:8;min-width:190px;max-width:240px;padding:12px 16px;background:#081216d9;border:1px solid #d9ad6370;border-radius:7px;color:#f4ead7;box-shadow:0 3px 24px #0007;pointer-events:none;text-align:right}
+.weapon-hud__title{font-size:10px;font-weight:800;color:#e5bf7a;letter-spacing:.11em}
+.weapon-hud__ammo{font-variant-numeric:tabular-nums;font-size:20px;font-weight:600;line-height:1.6}
+.weapon-hud__ammo strong{font-size:38px;font-weight:900;color:#fff}
+.weapon-hud__controls{font-size:9px;color:#c5cbc8;letter-spacing:.03em}
+@media(max-width:650px){.weapon-hud{right:12px;bottom:24px;min-width:155px;padding:10px}.weapon-hud__ammo strong{font-size:29px}}

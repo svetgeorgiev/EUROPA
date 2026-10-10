@@ -152,6 +152,11 @@ export class CharacterAvatar {
       importRoot.parent = this.root;
       this.gltfRoot = importRoot;
       this.animationGroups = result.animationGroups;
+      console.info('EUROPA: character rig inspection', {
+        skeletons: result.skeletons.length,
+        animationClips: result.animationGroups.map(group => group.name),
+        renderMeshes: renderables.length
+      });
       for (const group of this.animationGroups) group.stop();
       for (const clip of ['idle', 'walk', 'run', 'jump', 'armed'] as const) {
         const group = this.chooseClip(clip);

@@ -1,3 +1,4 @@
+import { AbandonedCar } from './AbandonedCar';
 import { renderOSMWorld } from '../world/renderOSM';
 import { ChunkRenderer, type ChunkGeometry } from '../world/ChunkRenderer';
 import { ChunkStreamer, type ChunkStreamStats } from '../world/ChunkStreamer';
@@ -21,6 +22,8 @@ export interface GameCallbacks {
   onError: (message: string) => void;
   onWorldChange: (mode: 'test' | 'osm' | 'stream') => void;
   onStreamStats: (stats: ChunkStreamStats) => void;
+  onVehicleStatus: (message: string) => void;
+  onInteractionHint: (hint: string) => void;
 }
 
 const WALK_SPEED = 4.5;
@@ -62,6 +65,8 @@ export class EuropaGame {
   private campusGrounds: CampusGrounds | null = null;
   private poiFrameSeconds = 0;
   private worldReady = false;
+  private abandonedCar: AbandonedCar | null = null;
+  private lastInteractionHint = '';
 
   constructor(private readonly canvas: HTMLCanvasElement, callbacks: GameCallbacks) {
     this.callbacks = callbacks;
@@ -274,6 +279,7 @@ export class EuropaGame {
       this.streamActive = true;
       this.worldReady = true;
       this.syncStreamSolids();
+      this.initVehicle();
       this.teleportPlayer(safeSpawn);
       this.lastStreamTile = id;
       this.callbacks.onWorldChange('stream');
@@ -343,12 +349,29 @@ export class EuropaGame {
       }
       this.teleportPlayer(safe ?? world.spawn);
       this.worldReady = true;
+      this.initVehicle();
       this.callbacks.onWorldChange('osm');
       this.publishStats();
       console.info('EUROPA: loaded OpenStreetMap world:', map.roads.length, 'road segments,', map.buildings.length, 'buildings');
     } catch (error) {
       console.warn('EUROPA: could not load optional OSM world; using test environment.', error);
     }
+  }
+
+  private initVehicle(): void {
+    if (this.disposed || this.abandonedCar) return;
+    // Initial placement near СУ Иван Вазов, not a surveyed parking bay.
+    // Avoid OSM building footprint collisions before spawning.
+    const safe = this.buildingCollisions.findSafePosition(
+      { x: -65, z: -12 }, 3.0, this.chunkManifest?.halfSizeMeters ?? 500, 80
+    );
+    if (!safe) {
+      this.callbacks.onVehicleStatus('No safe location for prototype vehicle');
+      return;
+    }
+    const vehicle = new AbandonedCar(this.scene, this.callbacks.onVehicleStatus);
+    this.abandonedCar = vehicle;
+    void vehicle.load(safe.x, safe.z);
   }
 
   private teleportPlayer(position: Point2): void {
@@ -377,6 +400,11 @@ export class EuropaGame {
   }
 
   private onKeyDown = (event: KeyboardEvent): void => {
+    if (event.code === 'KeyE' && !event.repeat && document.pointerLockElement === this.canvas) {
+      event.preventDefault();
+      this.abandonedCar?.interact(this.camera.position, this.yaw);
+      return;
+    }
     if (event.code === 'KeyR' && !event.repeat) {
       event.preventDefault();
       this.respawnPlayer();
@@ -418,6 +446,11 @@ export class EuropaGame {
       const playing = document.pointerLockElement === this.canvas;
       if (playing) this.updateMovement(dt);
       this.updateChunkStreaming();
+      const hint = playing ? (this.abandonedCar?.interactionLabel(this.camera.position, this.yaw) ?? '') : '';
+      if (hint !== this.lastInteractionHint) {
+        this.lastInteractionHint = hint;
+        this.callbacks.onInteractionHint(hint);
+      }
       this.scene.render();
       this.poiFrameSeconds += dt;
       if (this.poiFrameSeconds >= 0.033) {
@@ -524,6 +557,8 @@ export class EuropaGame {
     if (this.disposed) return;
     this.disposed = true;
     this.streamAbort.abort();
+    this.abandonedCar?.dispose();
+    this.abandonedCar = null;
     this.poiMarkers?.dispose();
     this.poiMarkers = null;
     this.campusGrounds?.dispose();

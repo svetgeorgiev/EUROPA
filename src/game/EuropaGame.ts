@@ -4,6 +4,9 @@ import { ChunkStreamer, type ChunkStreamStats } from '../world/ChunkStreamer';
 import { chunkAt, chunkId, isChunkManifest, type ChunkManifest, type ChunkFile } from '../world/chunkGrid';
 import { isWorldMap, type Point2 } from '../world/osm';
 import { BuildingCollisionField } from '../world/buildingCollisions';
+import { PoiMarkers } from '../world/PoiMarkers';
+import type { WorldMap } from '../world/osm';
+import type { NavigationData } from '../world/navigation';
 import {
   Engine, Scene, FreeCamera, Vector3, HemisphericLight, DirectionalLight,
   MeshBuilder, StandardMaterial, Color3, Color4, Mesh, Scalar, Ray
@@ -53,6 +56,8 @@ export class EuropaGame {
   private readonly buildingCollisions = new BuildingCollisionField();
   // Last known non-overlapping ground position. Also powers the R unstuck key.
   private lastSafePosition: Point2 = { x: 0, z: -7 };
+  private poiMarkers: PoiMarkers | null = null;
+  private worldReady = false;
 
   constructor(private readonly canvas: HTMLCanvasElement, callbacks: GameCallbacks) {
     this.callbacks = callbacks;
@@ -263,6 +268,7 @@ export class EuropaGame {
       oldMeshes.forEach(mesh => mesh.dispose());
       this.boundaryMeshes = this.chunkRenderer.createWorldBoundary();
       this.streamActive = true;
+      this.worldReady = true;
       this.syncStreamSolids();
       this.teleportPlayer(safeSpawn);
       this.lastStreamTile = id;
@@ -332,6 +338,7 @@ export class EuropaGame {
         console.warn('EUROPA: could not find a clear static OSM spawn; use R if trapped.');
       }
       this.teleportPlayer(safe ?? world.spawn);
+      this.worldReady = true;
       this.callbacks.onWorldChange('osm');
       this.publishStats();
       console.info('EUROPA: loaded OpenStreetMap world:', map.roads.length, 'road segments,', map.buildings.length, 'buildings');
@@ -421,8 +428,21 @@ export class EuropaGame {
     }
   };
 
+  /** Labels are advisory metadata; OSM building footprints remain authoritative. */
+  setPoiData(worldMap: WorldMap, nav: NavigationData): void {
+    if (this.disposed || !this.worldReady) return;
+    try {
+      this.poiMarkers?.dispose();
+      this.poiMarkers = new PoiMarkers(this.scene, worldMap, nav);
+      this.poiMarkers.update({ x: this.camera.position.x, z: this.camera.position.z });
+    } catch (error) {
+      console.warn('EUROPA: optional landmark labels unavailable', error);
+    }
+  }
+
   private publishStats(): void {
     const p = this.camera.position;
+    this.poiMarkers?.update({ x: p.x, z: p.z });
     this.callbacks.onStats({ fps: Math.round(this.engine.getFps()) || 0, x: p.x, y: p.y, z: p.z, yaw: this.yaw, grounded: this.grounded });
   }
 
@@ -489,6 +509,8 @@ export class EuropaGame {
     if (this.disposed) return;
     this.disposed = true;
     this.streamAbort.abort();
+    this.poiMarkers?.dispose();
+    this.poiMarkers = null;
     this.buildingCollisions.clear();
     this.streamer?.dispose();
     this.streamer = null;

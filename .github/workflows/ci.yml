@@ -1,7 +1,7 @@
 name: Validate EUROPA
 on:
   push:
-    branches: [main, 'feat/europa-002d-recognisable-nova-zagora']
+    branches: [main, 'feat/europa-002d2-building-coverage-architecture']
   pull_request:
 jobs:
   validate:

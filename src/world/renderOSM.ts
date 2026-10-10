@@ -1,5 +1,6 @@
 import { Scene, Mesh, MeshBuilder, StandardMaterial, VertexData } from '@babylonjs/core';
 import { buildBuildingGeometry } from './meshGeometry.ts';
+import { buildRoofGeometry } from './roofGeometry.ts';
 import { mergeRoadSurfaceSafely, type MapBounds } from './roadJunctions.ts';
 import {
   createWorldMaterials, renderProceduralFacadeDetails, renderProceduralRoadDetails
@@ -49,6 +50,25 @@ export function makeBuilding(
   return mesh;
 }
 
+/** Procedural roof is a render-only overlay above the legacy flat slab. */
+export function makeRoof(
+  scene: Scene, footprint: BuildingFootprint, material: StandardMaterial
+): Mesh | null {
+  const geometry = buildRoofGeometry(footprint);
+  if (!geometry) return null;
+  const mesh = new Mesh('roof-' + footprint.id, scene);
+  const vertexData = new VertexData();
+  vertexData.positions = geometry.positions;
+  vertexData.normals = geometry.normals;
+  vertexData.indices = geometry.indices;
+  vertexData.uvs = geometry.uvs;
+  vertexData.applyToMesh(mesh);
+  mesh.material = material;
+  mesh.isPickable = false;
+  mesh.checkCollisions = false;
+  return mesh;
+}
+
 const PEDESTRIAN = new Set(['footway', 'path', 'pedestrian', 'cycleway', 'track']);
 
 /** Static 002B fallback also receives the same procedural appearance as 002C. */
@@ -73,6 +93,8 @@ export function renderOSMWorld(scene: Scene, map: WorldMap): RenderedWorld {
     const mesh = makeBuilding(scene, footprint,
       materials.walls[Math.abs(footprint.id) % materials.walls.length]);
     if (mesh) solids.push(mesh);
+    makeRoof(scene, footprint,
+      materials.roofs[Math.abs(footprint.id) % materials.roofs.length]);
   }
   renderProceduralFacadeDetails(scene, 'osm', map.buildings, materials);
 

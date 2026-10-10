@@ -48,22 +48,43 @@ export function normalizeCoreMapJSON(data) {
     nodes.set(element.id, { lat: element.lat, lon: element.lon });
   }
 
+  // OSM building multipolygons often use untagged "outer" member ways.
+  // Retain those member geometries even if they have no building=* tag.
+  const buildingRelations = data.elements.filter(element =>
+    element.type === 'relation' && Number.isSafeInteger(element.id) &&
+    element.tags?.building && element.tags.building !== 'no' &&
+    element.tags.type === 'multipolygon' && Array.isArray(element.members));
+  const memberIds = new Set(buildingRelations.flatMap(relation =>
+    relation.members.filter(member => member.type === 'way').map(member => member.ref)));
+
   const elements = [];
   let missingNodeWays = 0;
   for (const element of data.elements) {
     if (element.type !== 'way' || !Number.isSafeInteger(element.id)) continue;
-    if (!element.tags?.highway && !element.tags?.building) continue;
+    if (!element.tags?.highway && !element.tags?.building && !memberIds.has(element.id)) continue;
     if (!Array.isArray(element.nodes) || element.nodes.length < 2) continue;
     const geometry = element.nodes.map(id => nodes.get(id));
     if (geometry.some(point => !point)) {
       missingNodeWays++;
-      continue; // Never connect unrelated nodes across missing geometry.
+      continue;
     }
     elements.push({
       type: 'way',
       id: element.id,
-      tags: element.tags,
+      tags: element.tags ?? {},
       geometry
+    });
+  }
+  for (const relation of buildingRelations) {
+    elements.push({
+      type: 'relation',
+      id: relation.id,
+      tags: relation.tags,
+      members: relation.members.map(member => ({
+        type: member.type,
+        ref: member.ref,
+        role: member.role
+      }))
     });
   }
   return {

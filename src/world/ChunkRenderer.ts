@@ -1,5 +1,5 @@
 import { Mesh, MeshBuilder, Scene } from '@babylonjs/core';
-import { makeBuilding, makeRoadSurface } from './renderOSM';
+import { makeBuilding, makeRoadSurface, makeRoof } from './renderOSM';
 import {
   createWorldMaterials, renderProceduralFacadeDetails,
   renderProceduralRoadDetails, type WorldMaterials
@@ -81,6 +81,11 @@ export class ChunkRenderer {
           // The ground alone handles vertical collision. Footprint collision
           // is registered separately by EuropaGame even if a facade fails.
           solids.push(building);
+          try {
+            const roof = makeRoof(this.scene, footprint,
+              this.materials.roofs[Math.abs(footprint.id) % this.materials.roofs.length]);
+            if (roof) meshes.push(roof);
+          } catch (error) { warn('roof ' + footprint.id, error); }
         } catch (error) { warn('building ' + footprint.id, error); }
       }
 

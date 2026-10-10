@@ -79,6 +79,7 @@ export interface WorldMaterials {
   shoulder: StandardMaterial;
   marking: StandardMaterial;
   facadeDetail: StandardMaterial;
+  roofs: StandardMaterial[];
   walls: StandardMaterial[];
   dispose: () => void;
 }
@@ -92,6 +93,33 @@ export function createWorldMaterials(
   const shoulder = makeMaterial(scene, namePrefix + '-shoulders', WORLD_COLORS.concrete, 0.03);
   const marking = makeMaterial(scene, namePrefix + '-road-marking', WORLD_COLORS.paint, 0.04);
   const facadeDetail = makeMaterial(scene, namePrefix + '-facade-decoration', '#c1c7c5', 0.075);
+  const roofs = ['#a6593d', '#884b3a', '#636268'].map((hex, i) =>
+    makeMaterial(scene, namePrefix + '-roof-' + i, hex, 0.035));
+  const roofTexture = new DynamicTexture(namePrefix + '-roof-tiles',
+    { width: 128, height: 128 }, scene, false);
+  const roofContext = roofTexture.getContext();
+  roofContext.fillStyle = '#dbd3c9';
+  roofContext.fillRect(0, 0, 128, 128);
+  roofContext.strokeStyle = '#8e8882';
+  roofContext.lineWidth = 2;
+  // Stylised clay/slate tile courses; shared across all chunks.
+  for (let y = 0; y <= 128; y += 16) {
+    roofContext.beginPath();
+    roofContext.moveTo(0, y);
+    roofContext.lineTo(128, y);
+    roofContext.stroke();
+    for (let x = ((y / 16) % 2) * 12; x <= 128; x += 24) {
+      roofContext.beginPath();
+      roofContext.moveTo(x, y);
+      roofContext.lineTo(x, y + 16);
+      roofContext.stroke();
+    }
+  }
+  roofTexture.update(false);
+  roofTexture.wrapU = Texture.WRAP_ADDRESSMODE;
+  roofTexture.wrapV = Texture.WRAP_ADDRESSMODE;
+  for (const roof of roofs) roof.diffuseTexture = roofTexture;
+
   const walls = WORLD_COLORS.facades.map((hex, i) =>
     makeMaterial(scene, namePrefix + '-facade-' + i, hex, 0.04)
   );
@@ -103,12 +131,12 @@ export function createWorldMaterials(
   ];
   ground.diffuseTexture = textures[0];
   road.diffuseTexture = textures[1];
-  const materials = [ground, road, path, shoulder, marking, facadeDetail, ...walls];
+  const materials = [ground, road, path, shoulder, marking, facadeDetail, ...roofs, ...walls];
   return {
-    ground, road, path, shoulder, marking, facadeDetail, walls,
+    ground, road, path, shoulder, marking, facadeDetail, roofs, walls,
     dispose: () => {
       for (const material of materials) material.dispose();
-      for (const texture of textures) texture.dispose();
+      for (const texture of [...textures, roofTexture]) texture.dispose();
     }
   };
 }

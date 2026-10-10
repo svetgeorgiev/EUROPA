@@ -549,6 +549,7 @@ export class EuropaGame {
       const playing = document.pointerLockElement === this.canvas;
       if (playing) this.updateMovement(dt);
       this.updateChunkStreaming();
+      this.weapon?.setLocomotion(this.movingSpeed, this.grounded);
       this.weapon?.update(dt);
       this.damageable?.update(dt);
       const p = this.playerCollider.position;

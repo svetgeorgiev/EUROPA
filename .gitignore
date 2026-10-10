@@ -21,3 +21,5 @@ public/assets/vehicles/abandoned-car.glb
 public/assets/guns/gun.glb
 # New local character model: check Sketchfab licence, size, rigging, and animation clips before publishing
 public/assets/skins/skin_1.glb
+# Uploaded M249 CC-BY asset is kept local pending explicit credits and release packaging
+public/assets/guns/gun2.glb

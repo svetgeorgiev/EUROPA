@@ -13,8 +13,36 @@ import {
  * Uses a locally supplied Sketchfab GLB and falls back to a lightweight placeholder.
  * Hitscan impacts only: no NPC damage, physical projectiles or combat AI.
  */
-const STORAGE_KEY = 'europa-002f-weapon-ammo-v1';
-const SHOT_COOLDOWN_SECONDS = 0.22;
+export type WeaponId = 'primary' | 'm249';
+export interface WeaponHudState extends WeaponAmmo {
+  weaponId: WeaponId;
+  name: string;
+  primaryOwned: boolean;
+  secondaryOwned: boolean;
+}
+export interface WeaponConfig {
+  id: WeaponId;
+  name: string;
+  assetFile: string;
+  storageKey: string;
+  magazineSize: number;
+  reserveRounds: number;
+  shotCooldown: number;
+  automatic: boolean;
+  restockAmount: number;
+}
+export const PRIMARY_WEAPON: Readonly<WeaponConfig> = Object.freeze({
+  id: 'primary', name: 'SURVIVOR RIFLE', assetFile: 'gun.glb',
+  storageKey: 'europa-002f-weapon-ammo-v1',
+  magazineSize: 8, reserveRounds: 24, shotCooldown: 0.22,
+  automatic: false, restockAmount: 24
+});
+export const M249_WEAPON: Readonly<WeaponConfig> = Object.freeze({
+  id: 'm249', name: 'M249', assetFile: 'gun2.glb',
+  storageKey: 'europa-002i-m249-weapon-v1',
+  magazineSize: 60, reserveRounds: 120, shotCooldown: 0.09,
+  automatic: true, restockAmount: 60
+});
 const MAX_RANGE_METRES = 130;
 
 export class FirstPersonGun {
@@ -26,6 +54,9 @@ export class FirstPersonGun {
   private modelAlignment: TransformNode | null = null;
   private modelYaw = 0;
   private gunFlipped = false;
+  private modelPitch = 0;
+  private triggerHeld = false;
+  private readonly config: WeaponConfig;
   private readonly impactMaterial: StandardMaterial;
   private readonly impactMarkers: Array<{ mesh: Mesh; ttl: number }> = [];
   private modelRoot: TransformNode | null = null;
@@ -44,11 +75,13 @@ export class FirstPersonGun {
     private readonly camera: FreeCamera,
     private readonly publish: (ammo: WeaponAmmo) => void,
     private readonly notify: (message: string) => void,
-    private readonly onWorldImpact?: (mesh: AbstractMesh, position: Vector3, direction: Vector3) => void
+    private readonly onWorldImpact?: (mesh: AbstractMesh, position: Vector3, direction: Vector3) => void,
+    config: WeaponConfig = PRIMARY_WEAPON
   ) {
+    this.config = config;
     try {
-      const saved: unknown = JSON.parse(localStorage.getItem(STORAGE_KEY) ?? 'null');
-      if (validWeaponAmmo(saved)) this.ammo = { ...saved };
+      const saved: unknown = JSON.parse(localStorage.getItem(this.config.storageKey) ?? 'null');
+      if (validWeaponAmmo(saved, this.config.magazineSize)) this.ammo = { ...saved };
     } catch { /* Storage may be unavailable in private mode. */ }
 
     this.pivot = new TransformNode('equipped-gun-pivot', scene);
@@ -67,6 +100,11 @@ export class FirstPersonGun {
 
   get hasGun(): boolean { return this.ammo.owned; }
   get snapshot(): WeaponAmmo { return { ...this.ammo }; }
+  get id(): WeaponId { return this.config.id; }
+  get name(): string { return this.config.name; }
+  get restockAmount(): number { return this.config.restockAmount; }
+  get needsAmmo(): boolean { return this.hasGun && this.ammo.reserve < this.config.magazineSize; }
+  setTriggerHeld(held: boolean): void { this.triggerHeld = held; }
 
   setLocomotion(speed: number, grounded: boolean): void {
     this.walkingSpeed = Math.min(8, Math.max(0, speed));
@@ -79,7 +117,7 @@ export class FirstPersonGun {
   }
 
   private save(): void {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(this.ammo)); }
+    try { localStorage.setItem(this.config.storageKey, JSON.stringify(this.ammo)); }
     catch { /* This session remains playable without persistent storage. */ }
     this.publish(this.snapshot);
   }
@@ -152,13 +190,13 @@ export class FirstPersonGun {
     this.notify(this.gunFlipped ? 'Weapon facing flipped · G to reverse' : 'Weapon facing restored');
   }
 
-  restock(rounds = 24): boolean {
+  restock(rounds = this.config.restockAmount): boolean {
     if (!this.ammo.owned || this.disposed) return false;
-    const { next, added } = addReserveAmmunition(this.ammo, rounds);
+    const { next, added } = addReserveAmmunition(this.ammo, rounds, 480);
     if (added <= 0) return false;
     this.ammo = next;
     // When completely empty, automatically load the first magazine.
-    if (this.ammo.loaded === 0) this.ammo = reloadWeapon(this.ammo).next;
+    if (this.ammo.loaded === 0) this.ammo = reloadWeapon(this.ammo, this.config.magazineSize).next;
     this.save();
     this.notify('Recovered ' + added + ' practice rounds · ' +
       this.ammo.loaded + ' loaded / ' + this.ammo.reserve + ' spare');
@@ -176,11 +214,11 @@ export class FirstPersonGun {
   private async loadModel(): Promise<void> {
     if (this.loading || this.disposed || this.modelRoot) return;
     this.loading = true;
-    this.notify('Loading firearm model /assets/guns/gun.glb ...');
+    this.notify('Loading ' + this.config.name + ' model /assets/guns/' + this.config.assetFile + ' ...');
     const assetRoot = new TransformNode('equipped-gun-gltf', this.scene);
     try {
       const result = await SceneLoader.ImportMeshAsync(
-        '', '/assets/guns/', 'gun.glb', this.scene
+        '', '/assets/guns/', this.config.assetFile, this.scene
       );
       if (this.disposed) {
         result.meshes.forEach(mesh => mesh.dispose(false, true));
@@ -218,17 +256,20 @@ export class FirstPersonGun {
       const modelAlignment = new TransformNode('gun-orientation-pivot', this.scene);
       modelAlignment.parent = this.pivot;
       assetRoot.parent = modelAlignment;
-      // Auto-correct horizontal rifle models imported sideways from Sketchfab.
-      this.modelYaw = dim.x > dim.z ? Math.PI / 2 : 0;
+      // The inspected M249 model has its longest axis along Y.
+      // Orient its long axis toward +Z; G reverses the muzzle if needed.
+      this.modelYaw = dim.x > dim.z && dim.x >= dim.y ? Math.PI / 2 : 0;
+      this.modelPitch = dim.y > dim.x && dim.y > dim.z ? Math.PI / 2 : 0;
       modelAlignment.rotation.y = this.modelYaw + (this.gunFlipped ? Math.PI : 0);
+      modelAlignment.rotation.x = this.modelPitch;
       this.modelAlignment = modelAlignment;
       this.modelRoot = modelAlignment;
       this.placeholder.forEach(mesh => mesh.setEnabled(false));
-      this.notify('Gun model loaded · left click to shoot · F to reload');
+      this.notify(this.config.name + ' model loaded · left click to shoot · F to reload');
     } catch (error) {
       assetRoot.dispose(false, true);
       if (!this.disposed) {
-        this.notify('Gun GLB unavailable; placeholder is usable. Check /assets/guns/gun.glb and Console.');
+        this.notify(this.config.assetFile + ' unavailable; placeholder is usable. Check /assets/guns/' + this.config.assetFile);
         console.error('EUROPA: gun GLB loading failed', error);
       }
     } finally {
@@ -238,10 +279,10 @@ export class FirstPersonGun {
 
   pickUp(): void {
     if (this.disposed || this.ammo.owned) return;
-    this.ammo = pickUpWeapon(this.ammo);
+    this.ammo = pickUpWeapon(this.ammo, this.config.magazineSize, this.config.reserveRounds);
     this.save();
     this.pivot.setEnabled(this.viewModelVisible);
-    this.notify('Firearm recovered from vehicle · left mouse button to fire · F to reload');
+    this.notify(this.config.name + ' recovered from car · left click to shoot · F to reload');
     void this.loadModel();
   }
 
@@ -256,7 +297,7 @@ export class FirstPersonGun {
     }
     this.ammo = next;
     this.save();
-    this.cooldown = SHOT_COOLDOWN_SECONDS;
+    this.cooldown = this.config.shotCooldown;
     this.recoil = 1;
     const direction = this.camera.getForwardRay(MAX_RANGE_METRES);
     const hit = this.scene.pickWithRay(
@@ -274,7 +315,7 @@ export class FirstPersonGun {
 
   reload(): void {
     if (this.disposed || !this.ammo.owned) return;
-    const { next, added } = reloadWeapon(this.ammo);
+    const { next, added } = reloadWeapon(this.ammo, this.config.magazineSize);
     if (!added) {
       this.notify(next.reserve === 0 ? 'No spare ammunition' : 'Magazine already full');
       return;
@@ -301,6 +342,7 @@ export class FirstPersonGun {
   update(dt: number): void {
     if (this.disposed) return;
     this.cooldown = Math.max(0, this.cooldown - dt);
+    if (this.config.automatic && this.triggerHeld && this.viewModelVisible && this.ammo.owned) this.fire();
     this.recoil = Math.max(0, this.recoil - dt * 6.5);
     const move = this.walkingGrounded ? Math.min(1, this.walkingSpeed / 5) : 0.2;
     this.bobTime += dt * (this.walkingSpeed > 5 ? 12 : 8);

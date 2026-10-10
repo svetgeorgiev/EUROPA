@@ -38,6 +38,7 @@ export class CharacterAvatar {
   private activeClip: AnimationGroup | null = null;
   private disposed = false;
   private visible = false;
+  private wasVisible = false;
   private time = 0;
   private animStatus = 'procedural placeholder';
 
@@ -187,9 +188,12 @@ export class CharacterAvatar {
     this.root.setEnabled(motion.visible);
     // Do not update bone/mesh animation unnecessarily when not rendering avatar.
     if (!motion.visible) {
-      this.activeClip?.pause();
+      if (this.wasVisible) this.activeClip?.pause();
+      this.wasVisible = false;
       return;
     }
+    const resumed = !this.wasVisible;
+    this.wasVisible = true;
     this.root.position.set(motion.x, motion.feetY, motion.z);
     this.root.rotation.y = motion.yaw;
     this.time += dt;
@@ -200,7 +204,7 @@ export class CharacterAvatar {
         this.activeClip?.stop();
         this.activeClip = next;
         if (next) next.start(true, motion.sprinting ? 1.25 : 1);
-      } else {
+      } else if (resumed) {
         this.activeClip?.play(true);
       }
     }

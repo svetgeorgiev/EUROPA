@@ -66,3 +66,15 @@ test('ammo restock respects cap and refuses non-owners or invalid values', () =>
   assert.equal(addReserveAmmunition({ owned: true, loaded: 8, reserve: 96 }, 24).added, 0);
   assert.equal(addReserveAmmunition({ owned: true, loaded: 1, reserve: 0 }, -3).added, 0);
 });
+
+test('M249 has 60 loaded and 120 reserve without changing the first rifle', () => {
+  const state = pickUpWeapon({ ...EMPTY_WEAPON }, 60, 120);
+  assert.deepEqual(state, { owned: true, loaded: 60, reserve: 120 });
+  assert.equal(validWeaponAmmo(state), false, 'old rifle validator stays 8-round');
+  assert.equal(validWeaponAmmo(state, 60), true, 'M249 validator allows 60');
+  const afterShot = fireWeapon(state);
+  assert.equal(afterShot.fired, true);
+  assert.equal(afterShot.next.loaded, 59);
+  const reloaded = reloadWeapon(afterShot.next, 60);
+  assert.deepEqual(reloaded.next, { owned: true, loaded: 60, reserve: 119 });
+});

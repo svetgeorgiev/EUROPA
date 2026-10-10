@@ -78,3 +78,5 @@ Do not infer their location just from a campus border or from the user's
 screenshot. We can add them when verified data exists.
 
 © OpenStreetMap contributors, ODbL 1.0. Game code GPL-3.0.
+
+3D school-site name markers are visible up to 130m when facing the POI; ordinary POI labels keep the previous 85m default. Markers do not reveal or guess entrances.

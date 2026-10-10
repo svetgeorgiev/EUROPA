@@ -10,6 +10,7 @@ import {
 interface Marker {
   position: Point2;
   element: HTMLDivElement;
+  schoolGrounds: boolean;
 }
 
 /**
@@ -73,7 +74,7 @@ export class PoiMarkers {
         : 'OSM POI · NO IMPORTED BUILDING OUTLINE';
     element.append(title, caption);
     element.hidden = true;
-    return { position: entry.landmark.point, element };
+    return { position: entry.landmark.point, element, schoolGrounds: school !== null };
   }
 
   /** Run at most ~30 fps from the game loop, even at high render rates. */
@@ -87,11 +88,14 @@ export class PoiMarkers {
     const viewport = camera.viewport.toGlobal(width, height);
     const cssX = this.canvas.clientWidth / width;
     const cssY = this.canvas.clientHeight / height;
-    const maxSq = maxDistance * maxDistance;
     let shown = 0;
     for (const marker of this.markers) {
+      // Campus identity is useful before arriving at the school gate. Other
+      // POIs retain the existing short range to avoid a wall of labels.
+      const range = marker.schoolGrounds ? Math.max(maxDistance, 130) : maxDistance;
       const dx = marker.position.x - player.x, dz = marker.position.z - player.z;
-      if (dx * dx + dz * dz > maxSq || dx * dx + dz * dz < 16 || shown >= 8) {
+      if (dx * dx + dz * dz > range * range ||
+          dx * dx + dz * dz < 16 || shown >= 8) {
         marker.element.hidden = true;
         continue;
       }

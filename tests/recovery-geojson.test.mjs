@@ -1,0 +1,128 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { worldToGeo } from '../src/geo/coordinates.ts';
+import { NOVA_ZAGORA_ANCHOR as anchor } from '../src/geo/worldConfig.ts';
+import { buildWorldMap } from '../src/world/osm.ts';
+import { buildNavigationData } from '../src/world/navigation.ts';
+import { normalizeOsmiumGeoJSON } from '../src/world/recoveryInput.ts';
+import { auditLandmarks, compareRecovery, insideSite } from '../src/world/recoveryAudit.ts';
+
+const at = (x,z) => {
+  const geo = worldToGeo({ x, z, y: 0 }, anchor);
+  return [geo.longitude, geo.latitude];
+};
+const feature = (type, id, tags, geometry) => ({
+  type: 'Feature', properties: { '@type': type, '@id': id, ...tags }, geometry
+});
+const street = feature('way', 22, { highway: 'residential', name: 'ул. Примерна' },
+  { type: 'LineString', coordinates: [at(-100,0),at(100,0)] });
+const oldBuilding = feature('way', 101, { building: 'house' },
+  { type: 'Polygon', coordinates: [[at(-30,-30),at(-20,-30),at(-20,-20),at(-30,-20),at(-30,-30)]] });
+const addedBuilding = feature('way', 102, { building: 'school', 'building:levels': '2' },
+  { type: 'Polygon', coordinates: [[at(15,15),at(30,15),at(30,30),at(15,30),at(15,15)]] });
+const schoolNode = feature('node', 201, { amenity:'school', name:'СУ Иван Вазов' },
+  {type:'Point', coordinates: at(20,20)});
+const bankNode = feature('node', 202, { amenity:'bank', name:'TBI Bank' },
+  {type:'Point',coordinates:at(90,90)});
+const campus = feature('way', 301, { amenity:'school', name:'СУ Иван Вазов' },
+  {type:'Polygon', coordinates:[[
+    at(0,0),at(50,0),at(50,50),at(0,50),at(0,0)
+  ]]});
+function normalize(features) {
+  return normalizeOsmiumGeoJSON({type:'FeatureCollection',features},anchor);
+}
+function world(data) {
+  return buildWorldMap({elements:data.elements},anchor,'2026-10-10T00:00:00Z');
+}
+function navigation(data) {
+  return buildNavigationData({elements:data.elements},anchor,'2026-10-10T00:00:00Z');
+}
+
+test('osmium GeoJSON converts real streets, named nodes, school sites and buildings', () => {
+  const result=normalize([street,oldBuilding,addedBuilding,schoolNode,bankNode,campus]);
+  const map=world(result), nav=navigation(result);
+  assert.equal(map.roads.length,1);
+  assert.equal(map.buildings.length,2);
+  assert.deepEqual(map.buildings.map(b=>b.sourceId).sort(),['way/101','way/102']);
+  assert.ok(result.sites.length===1);
+  assert.equal(result.sites[0].name,'СУ Иван Вазов');
+  assert.ok(nav.streets.some(s=>s.name==='ул. Примерна'));
+  assert.ok(nav.landmarks.some(s=>s.name==='TBI Bank'));
+  assert.ok(result.stats.namedSites===1);
+});
+
+test('campus polygon is evidence, never itself a fake physical building', () => {
+  const data=normalize([street,oldBuilding,addedBuilding,schoolNode,bankNode,campus]);
+  const audit=auditLandmarks(world(data),navigation(data),data.sites);
+  const school=audit.landmarks.find(l=>l.name==='СУ Иван Вазов'&&l.id==='node/201');
+  assert.ok(school);
+  assert.equal(school.geometry,'inside-imported-building');
+  assert.equal(school.verifiedBuildingSource,'way/102');
+  assert.deepEqual(school.sites[0].campusBuildingIds,['way/102']);
+  assert.equal(school.sites[0].nameAgrees,true);
+  assert.ok(insideSite({x:22,z:22},data.sites[0]));
+  const bank=audit.landmarks.find(l=>l.name==='TBI Bank');
+  assert.equal(bank.geometry,'unmatched');
+  assert.equal(bank.verifiedBuildingSource,null);
+  assert.deepEqual(bank.sites,[]);
+  assert.equal(world(data).buildings.length,2,'site way never fabricated a third building');
+});
+
+test('preview compares exact OSM source IDs and flags coverage regressions', () => {
+  const baseline=normalize([street,oldBuilding,schoolNode,bankNode]);
+  const next=normalize([street,oldBuilding,addedBuilding,schoolNode,bankNode,campus]);
+  const result=compareRecovery(world(baseline),navigation(baseline),
+    world(next),navigation(next),next.sites,'synthetic-test.geojson');
+  assert.equal(result.addedBuildingCount,1);
+  assert.deepEqual(result.newBuildingSources,['way/102']);
+  assert.deepEqual(result.missingBuildingSources,[]);
+  assert.equal(result.passedSafetyGate,true);
+  assert.equal(result.before.countByGeometry['inside-imported-building'],0);
+  assert.ok(result.candidate.countByGeometry['inside-imported-building']>=1);
+  const regression=compareRecovery(world(next),navigation(next),
+    world(baseline),navigation(baseline),[], 'regressed.geojson');
+  assert.equal(regression.passedSafetyGate,false);
+  assert.deepEqual(regression.missingBuildingSources,['way/102']);
+});
+
+test('OSM polygon holes and multi-outers are explicitly skipped as physical buildings', () => {
+  const outer=[at(0,0),at(20,0),at(20,20),at(0,20),at(0,0)];
+  const hole=[at(5,5),at(12,5),at(12,12),at(5,12),at(5,5)];
+  const complex=feature('relation',404,{building:'yes',type:'multipolygon'},{
+    type:'Polygon',coordinates:[outer,hole]
+  });
+  const multi=feature('relation',405,{building:'yes'},{
+    type:'MultiPolygon',coordinates:[[outer],[outer.map(([x,y])=>[x+0.001,y])]]
+  });
+  const d=normalize([street,complex,multi]);
+  assert.equal(d.stats.skippedComplexBuildingAreas,2);
+  assert.equal(world(d).buildings.length,0);
+});
+
+test('a single true OSM relation outer polygon is imported with its relation ID', () => {
+  const relation=feature('relation',503,{building:'school'},{
+    type:'Polygon',coordinates:[[at(0,0),at(20,0),at(20,20),at(0,20),at(0,0)]]
+  });
+  const d=normalize([street,relation]);
+  assert.equal(world(d).buildings.length,1);
+  assert.equal(world(d).buildings[0].sourceId,'relation/503');
+});
+
+test('GeoJSON rejects anonymous GIS features: do not mint bogus OSM identities', () => {
+  const anonymous={type:'Feature',properties:{building:'yes'},geometry:oldBuilding.geometry};
+  assert.throws(()=>normalize([street,anonymous]),/genuine OSM @type\/@id/);
+});
+
+test('site geometry holes exclude their courtyard interiors from school evidence', () => {
+  const site=feature('way',310,{amenity:'school',name:'School with courtyard'},{
+    type:'Polygon',coordinates:[
+      [at(-30,-30),at(30,-30),at(30,30),at(-30,30),at(-30,-30)],
+      [at(-4,-4),at(4,-4),at(4,4),at(-4,4),at(-4,-4)]
+    ]
+  });
+  const d=normalize([street,site]);
+  assert.equal(d.sites.length,1);
+  assert.equal(insideSite({x:0,z:0},d.sites[0]),false);
+  assert.equal(insideSite({x:15,z:15},d.sites[0]),true);
+  assert.equal(world(d).buildings.length,0);
+});

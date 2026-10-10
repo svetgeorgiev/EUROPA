@@ -10,3 +10,8 @@ public/worlds/*/map.json
 public/worlds/*/chunks/
 # 002D.1 independent ODbL landmark / street label database
 public/worlds/*/navigation.json
+# Recovery source extracts and backups are ODbL data, not source code
+.europa-recovery/
+public/worlds/*/sites.json
+public/worlds/*.recovery-stage-*/
+public/worlds/*.recovery-backup-*/

@@ -14,6 +14,9 @@ export interface SourceFeature {
   id: number;
   tags?: Record<string, string>;
   geometry?: NodePosition[];
+  /** Raw OSM nodes used to build the co-snapshot navigation layer. */
+  lat?: number;
+  lon?: number;
   members?: Member[];
 }
 const LIMIT = 500;
@@ -150,6 +153,15 @@ export function extractBuildings(
     if (item.type !== 'relation' || !item.tags?.building ||
         item.tags.building === 'no' || !Number.isSafeInteger(item.id) ||
         item.tags.type !== 'multipolygon') continue;
+    // osmium GeoJSON already assembles relation outer rings into polygon
+    // coordinates. Only single outer polygons without inner rings are
+    // normalised this way; the converter rejects unsupported hole shapes.
+    if (item.geometry && item.geometry.length >= 4) {
+      if (!make('relation/' + item.id, -item.id, item.tags, item.geometry, true)) {
+        unsupportedRelations++;
+      }
+      continue;
+    }
     const members = item.members ?? [];
     if (members.some(m => m.role === 'inner')) {
       unsupportedRelations++;

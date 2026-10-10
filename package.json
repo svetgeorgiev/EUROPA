@@ -14,7 +14,9 @@
     "test": "node --experimental-strip-types --test tests/*.test.mjs",
     "map:chunks": "node --experimental-strip-types scripts/generate-chunks.mjs",
     "map:nav": "node --experimental-strip-types scripts/import-navigation.mjs",
-    "map:coverage": "node --experimental-strip-types scripts/check-building-coverage.mjs"
+    "map:coverage": "node --experimental-strip-types scripts/check-building-coverage.mjs",
+    "map:bbox": "node --experimental-strip-types scripts/recovery-bbox.mjs",
+    "map:recover": "node --experimental-strip-types scripts/recover-buildings.mjs"
   },
   "dependencies": {
     "@babylonjs/core": "^7.54.3",

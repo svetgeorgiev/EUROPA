@@ -7,7 +7,8 @@ import { isCampusSiteData } from './world/CampusSites';
 import type { CampusSiteData } from './world/CampusSites';
 import { EuropaGame, type GameStats } from './game/EuropaGame';
 import type { ChunkStreamStats } from './world/ChunkStreamer';
-import { EMPTY_WEAPON, type WeaponAmmo } from './game/weaponState';
+import { EMPTY_WEAPON } from './game/weaponState';
+import type { WeaponHudState } from './game/FirstPersonGun';
 import { computed } from 'vue';
 import { worldToGeo } from './geo/coordinates';
 import { NOVA_ZAGORA_ANCHOR } from './geo/worldConfig';
@@ -16,7 +17,10 @@ const locked = ref(false);
 const vehicleStatus = ref('');
 const interactionHint = ref('');
 const vehicleLocation = ref<{ x: number; z: number } | null>(null);
-const ammo = ref<WeaponAmmo>({ ...EMPTY_WEAPON });
+const ammo = ref<WeaponHudState>({
+  ...EMPTY_WEAPON, weaponId: 'primary', name: 'SURVIVOR RIFLE',
+  primaryOwned: false, secondaryOwned: false
+});
 const cameraMode = ref<'first' | 'third'>('first');
 const error = ref('');
 const worldMode = ref<'test' | 'osm' | 'stream'>('test');
@@ -119,7 +123,7 @@ function start(): void { game?.requestPointerLock(); }
 <template>
   <main class="viewport">
     <canvas ref="canvas" class="game-canvas" @click="start" aria-label="EUROPA 3D game viewport" />
-    <header class="hud-top"><div class="brand">EUROPA <span>002H</span></div><div class="sub">{{ worldMode === 'stream' ? 'STREAMED REAL-WORLD GEOMETRY' : worldMode !== 'test' ? 'STATIC OSM WORLD · RUN pnpm map:chunks' : 'TEST ENVIRONMENT · IMPORT PENDING' }}</div></header>
+    <header class="hud-top"><div class="brand">EUROPA <span>002I</span></div><div class="sub">{{ worldMode === 'stream' ? 'STREAMED REAL-WORLD GEOMETRY' : worldMode !== 'test' ? 'STATIC OSM WORLD · RUN pnpm map:chunks' : 'TEST ENVIRONMENT · IMPORT PENDING' }}</div></header>
     <div class="stats" aria-live="off"><strong>{{ stats.fps }}</strong> FPS <span class="separator">·</span> X {{ stats.x.toFixed(1) }} · Y {{ stats.y.toFixed(1) }} · Z {{ stats.z.toFixed(1) }} <span class="separator">·</span> {{ stats.grounded ? 'GROUNDED' : 'AIRBORNE' }}</div>
     <div class="geo-preview" :title="worldMode !== 'test' ? 'Real OSM planimetric geometry; flat elevation is not yet implemented' : 'Simulated projection only — run pnpm map:fetch to import real roads and buildings'">{{ worldMode !== 'test' ? 'OSM GEO PREVIEW · FLAT TERRAIN' : 'GEO PREVIEW (SIMULATED)' }} · {{ previewGeo.latitude.toFixed(6) }}° N · {{ previewGeo.longitude.toFixed(6) }}° E</div>
     <div v-if="worldMode === 'stream'" class="stream-debug" aria-live="off"
@@ -136,8 +140,9 @@ function start(): void { game?.requestPointerLock(); }
     <div v-if="locked && interactionHint" class="vehicle-interaction">{{ interactionHint }}</div>
     <div v-if="vehicleStatus" class="vehicle-status" role="status">{{ vehicleStatus }}</div>
     <div v-if="ammo.owned" class="weapon-hud" aria-live="off">
-      <div class="weapon-hud__title">RECOVERED FIREARM</div>
+      <div class="weapon-hud__title">{{ ammo.name }}</div>
       <div class="weapon-hud__ammo"><strong>{{ ammo.loaded }}</strong> / {{ ammo.reserve }}</div>
+      <div class="weapon-hud__controls">{{ ammo.primaryOwned ? '[1] Rifle' : '[1] Locked' }} &nbsp; {{ ammo.secondaryOwned ? '[2] M249' : '[2] Locked' }}</div>
       <div class="weapon-hud__controls">{{ ammo.loaded + ammo.reserve === 0 ? 'NO AMMO · RETURN TO CAR (E)' : 'LEFT CLICK · FIRE | F · RELOAD | G · FLIP GUN' }}</div>
     </div>
     <section v-if="!locked" class="start-overlay" @click="start">
@@ -146,7 +151,7 @@ function start(): void { game?.requestPointerLock(); }
         <h1>THE WORLD<br />AFTER THE FALL.</h1>
         <p>{{ worldMode === 'stream' ? 'Explore OSM Nova Zagora. World tiles load and unload as you move. Elevation and building interiors are not implemented.' : worldMode === 'osm' ? 'Explore the static OSM prototype. Run pnpm map:chunks to enable streaming.' : 'This is the synthetic environment. Run pnpm map:fetch --osm-api to import real Nova Zagora streets.' }}</p>
         <button type="button" @click.stop="start">CLICK TO ENTER <span>→</span></button>
-        <div class="controls">WASD — Move <span>·</span> Mouse — Look <span>·</span> Shift — Sprint <span>·</span> Space — Jump <span>·</span> R — Unstick <span>·</span> T — Retry chunks <span>·</span> M — Map <span>·</span> C — Camera / Character <span>·</span> V — Visit car <span>·</span> E — Loot car / Restock ammo <span>·</span> G — Flip gun <span>·</span> P — Preview skin <span>·</span> Left click — Shoot <span>·</span> F — Reload <span>·</span> Esc — Pause</div>
+        <div class="controls">WASD — Move <span>·</span> Mouse — Look <span>·</span> Shift — Sprint <span>·</span> Space — Jump <span>·</span> R — Unstick <span>·</span> T — Retry chunks <span>·</span> M — Map <span>·</span> C — Camera / Character <span>·</span> V — Visit car <span>·</span> E — Loot car / Restock ammo <span>·</span> G — Flip gun <span>·</span> P — Preview skin <span>·</span> 1/2 — Equip weapon <span>·</span> Left click — Shoot <span>·</span> F — Reload <span>·</span> Esc — Pause</div>
       </div>
     </section>
     <footer class="footer"><template v-if="worldMode !== 'test'">NOVA ZAGORA · MAP DATA <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener noreferrer">© OpenStreetMap contributors · ODbL 1.0</a></template><template v-else>NOVA ZAGORA · TEST WORLD · RUN pnpm map:fetch</template></footer>

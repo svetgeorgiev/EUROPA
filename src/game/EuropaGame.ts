@@ -23,6 +23,7 @@ export interface GameCallbacks {
   onWorldChange: (mode: 'test' | 'osm' | 'stream') => void;
   onStreamStats: (stats: ChunkStreamStats) => void;
   onVehicleStatus: (message: string) => void;
+  onVehicleLocation: (position: Point2 | null) => void;
   onInteractionHint: (hint: string) => void;
 }
 
@@ -371,7 +372,36 @@ export class EuropaGame {
     }
     const vehicle = new AbandonedCar(this.scene, this.callbacks.onVehicleStatus);
     this.abandonedCar = vehicle;
+    this.callbacks.onVehicleLocation(safe);
     void vehicle.load(safe.x, safe.z);
+  }
+
+  /** Debug only: place the player outside the car and face its centre. */
+  private visitVehicle(): void {
+    const position = this.abandonedCar?.location;
+    if (!position) {
+      this.callbacks.onVehicleStatus('No vehicle position yet — wait for the streamed map');
+      return;
+    }
+    const offsets = [
+      { x: 0, z: 8 }, { x: 8, z: 0 },
+      { x: -8, z: 0 }, { x: 0, z: -8 },
+      { x: 10, z: 10 }, { x: -10, z: -10 },
+      { x: 15, z: 0 }, { x: 0, z: 15 }
+    ];
+    const candidate = offsets.map(offset => ({
+      x: position.x + offset.x, z: position.z + offset.z
+    })).find(point => !this.buildingCollisions.isBlocked(point, BUILDING_CLEARANCE));
+    if (!candidate) {
+      this.callbacks.onVehicleStatus('Cannot find a safe vehicle visit point');
+      return;
+    }
+    this.teleportPlayer(candidate);
+    this.pitch = 0;
+    this.yaw = Math.atan2(position.x - candidate.x, position.z - candidate.z);
+    this.camera.rotation.set(this.pitch, this.yaw, 0);
+    this.callbacks.onVehicleStatus('Arrived near vehicle · walk towards it and press E to search');
+    this.publishStats();
   }
 
   private teleportPlayer(position: Point2): void {
@@ -400,6 +430,11 @@ export class EuropaGame {
   }
 
   private onKeyDown = (event: KeyboardEvent): void => {
+    if (event.code === 'KeyV' && !event.repeat && document.pointerLockElement === this.canvas) {
+      event.preventDefault();
+      this.visitVehicle();
+      return;
+    }
     if (event.code === 'KeyE' && !event.repeat && document.pointerLockElement === this.canvas) {
       event.preventDefault();
       this.abandonedCar?.interact(this.camera.position, this.yaw);
